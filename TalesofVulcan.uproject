@@ -1,8 +1,18 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.8",
+	"EngineAssociation": "{AFE3B72E-43AD-9C16-C112-F1BF2B0B9160}",
 	"Category": "",
 	"Description": "",
+	"Modules": [
+		{
+			"Name": "TalesofVulcan",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
+		}
+	],
 	"Plugins": [
 		{
 			"Name": "ModelingToolsEditorMode",
