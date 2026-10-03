@@ -1,27 +1,58 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "StaminaComponent.h"
 
-// Sets default values
-AStaminaComponent::AStaminaComponent()
+UStaminaComponent::UStaminaComponent()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
+	PrimaryComponentTick.bCanEverTick = true;
 }
 
-// Called when the game starts or when spawned
-void AStaminaComponent::BeginPlay()
+void UStaminaComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	TimeSinceSpent = RegenDelay;
+	SetStamina(MaxStamina);
 }
 
-// Called every frame
-void AStaminaComponent::Tick(float DeltaTime)
+void UStaminaComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	Super::Tick(DeltaTime);
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	TimeSinceSpent += DeltaTime;
+
+	if (TimeSinceSpent >= RegenDelay && Stamina < MaxStamina)
+	{
+		SetStamina(Stamina + RegenPerSecond * DeltaTime);
+	}
 }
 
+bool UStaminaComponent::CanAfford(float Cost) const
+{
+	return bAllowActionWhenLow ? Stamina > 0.f : Stamina >= Cost;
+}
+
+bool UStaminaComponent::TryUseStamina(float Cost)
+{
+	if (!CanAfford(Cost))
+	{
+		return false;
+	}
+
+	SetStamina(Stamina - FMath::Max(Cost, 0.f));
+	TimeSinceSpent = 0.f;
+	return true;
+}
+
+void UStaminaComponent::RefillStamina()
+{
+	SetStamina(MaxStamina);
+}
+
+void UStaminaComponent::SetStamina(float NewValue)
+{
+	const float Clamped = FMath::Clamp(NewValue, 0.f, MaxStamina);
+	if (!FMath::IsNearlyEqual(Clamped, Stamina))
+	{
+		Stamina = Clamped;
+		OnStaminaChanged.Broadcast(Stamina, MaxStamina);
+	}
+}
