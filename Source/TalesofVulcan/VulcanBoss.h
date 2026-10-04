@@ -6,6 +6,9 @@
 
 class UAnimMontage;
 class UHealthComponent;
+class UMaterialInstanceDynamic;
+class UPointLightComponent;
+class UStaticMeshComponent;
 class AVulcanProjectile;
 
 UENUM(BlueprintType)
@@ -38,6 +41,51 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Vulcan")
 	TObjectPtr<UHealthComponent> HealthComponent;
+
+	// ---------------------------------------------------------------- Otter body
+
+	/**
+	 * Builds a volcanic cartoon otter out of simple shapes that follow the mannequin's
+	 * bones (so every mannequin/Mixamo animation still works) and hides the mannequin.
+	 * Turn off when a real otter model is assigned to Mesh.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bUseOtterBody = true;
+
+	/** Cooled volcanic rock. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor FurColor = FLinearColor(FColor(70, 16, 12));
+
+	/** Belly — molten lava. Cools to black when Vulcan dies. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor LavaColor = FLinearColor(FColor(255, 80, 10));
+
+	/** Spikes, nose, glasses frames. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor ObsidianColor = FLinearColor(FColor(14, 10, 12));
+
+	/** Muzzle/cheeks, inner ears, eyebrow dots. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor MuzzleColor = FLinearColor(FColor(255, 196, 150));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor EyeColor = FLinearColor(FColor(12, 10, 10));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor LensColor = FLinearColor(FColor(222, 238, 246));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bShowGlasses = true;
+
+	/** Flickering lava light from the chest. Doubles in phase 2, goes out on death. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	float CoreGlowIntensity = 60.f;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	TArray<TObjectPtr<UStaticMeshComponent>> OtterParts;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	TObjectPtr<UPointLightComponent> CoreGlow;
 
 	// ---------------------------------------------------------------- General
 
@@ -277,8 +325,17 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
+	void ApplyOtterLook();
+	void UpdateOtterBody();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> OtterMaterials;
+
+	float OtterTime = 0.f;
+
 	void Think();
 	bool TryStartAttack(float DistanceToPlayer);
 	void FinishAttack();
