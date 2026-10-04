@@ -16,7 +16,8 @@
  * -FireShot     spawns each FireFX preset next to the player and films it.
  * -BossShot     starts the fight and films Vulcan (wake-up roar, attacks, flinches from a few hits, death).
  * -LockShot     starts the fight, locks on to Vulcan and films from the player camera with UI: a roll,
- *               a jump and plunge (dust), a hit (boss bar), then Vulcan's death (victory banner).
+ *               a jump and plunge (dust), a hit (boss bar), then Vulcan's death (victory banner). Also records
+ *               the game audio to Saved/SpearShots/lock_audio.wav.
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem

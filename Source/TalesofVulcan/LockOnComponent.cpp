@@ -1,4 +1,5 @@
 #include "LockOnComponent.h"
+#include "GameAudio.h"
 #include "HealthComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Image.h"
@@ -112,6 +113,7 @@ bool ULockOnComponent::ToggleLock()
 	Target = Best;
 	HiddenTime = 0.f;
 	SetFacingTarget(true);
+	GameAudio::Play2D(this, TEXT("LockOn"), 1.5f);
 
 	if (Controller && !Marker)
 	{

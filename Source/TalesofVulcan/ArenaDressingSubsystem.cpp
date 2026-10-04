@@ -1,5 +1,6 @@
 #include "ArenaDressingSubsystem.h"
 #include "FireFX.h"
+#include "GameAudio.h"
 #include "WindGrass.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLight.h"
@@ -109,6 +110,19 @@ namespace ArenaLayout
 	{
 		return FMath::Abs(FMath::FindDeltaAngleDegrees(Degrees, 90.f)) < 14.f;
 	}
+
+	/** Points a material's <Param>_D/_N/_R textures at a photo-scanned set (Poly Haven, CC0) in /Game/Environment/Textures. */
+	void UseTextures(UMaterialInstanceDynamic* Material, const TCHAR* Param, const TCHAR* Set)
+	{
+		for (const TCHAR* Map : { TEXT("D"), TEXT("N"), TEXT("R") })
+		{
+			const FString Path = FString::Printf(TEXT("/Game/Environment/Textures/T_%s_%s.T_%s_%s"), Set, Map, Set, Map);
+			if (UTexture* Texture = LoadObject<UTexture>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet))
+			{
+				Material->SetTextureParameterValue(*FString::Printf(TEXT("%s_%s"), Param, Map), Texture);
+			}
+		}
+	}
 }
 
 void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -141,6 +155,7 @@ void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	WeatherMaterials(InWorld);
 	ColorGrade(InWorld);
 	SetupLighting(InWorld);
+	GameAudio::Loop2D(&InWorld, TEXT("WindLoop"), 0.8f);
 }
 
 void UArenaDressingSubsystem::SetupFog(UWorld& World)
@@ -253,6 +268,7 @@ void UArenaDressingSubsystem::LaySandFloor(UWorld& World)
 	if (UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Sand, this))
 	{
 		Material->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.74f, 0.64f, 0.5f));
+		ArenaLayout::UseTextures(Material, TEXT("Sand"), TEXT("DesertSand"));
 		Component->SetMaterial(0, Material);
 	}
 }
@@ -712,11 +728,14 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 			for (int32 Slot = 0; Slot < Component->GetNumMaterials(); ++Slot)
 			{
 				UMaterialInterface* Material = Component->GetMaterial(Slot);
+				UMaterialInterface* Source = Material;
 				const UMaterial* Base = Material ? Material->GetBaseMaterial() : nullptr;
-				// One stone for everything: columns and rubble (limestone) switch to the colosseum's stone.
-				if (Base && Base->GetName() == TEXT("M_RomanColumn") && ColosseumStone)
+				// One stone material for everything: columns and rubble (limestone) switch to the colosseum's
+				// stone, with cracked sandstone instead of its blocks.
+				const bool bRuinStone = Base && Base->GetName() == TEXT("M_RomanColumn") && ColosseumStone;
+				if (bRuinStone)
 				{
-					Material = ColosseumStone;
+					Source = ColosseumStone;
 					Base = ColosseumStone->GetBaseMaterial();
 				}
 				const FLook* Look = nullptr;
@@ -732,13 +751,14 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 					continue;
 				}
 
-				UMaterialInstanceDynamic* Dynamic = Cast<UMaterialInstanceDynamic>(Material);
+				UMaterialInstanceDynamic* Dynamic = Cast<UMaterialInstanceDynamic>(Source);
 				if (!Dynamic)
 				{
+					// Keyed by the original, so ruin stone gets its own copy of the colosseum stone.
 					TObjectPtr<UMaterialInstanceDynamic>& Shared = Weathered.FindOrAdd(Material);
 					if (!Shared)
 					{
-						Shared = UMaterialInstanceDynamic::Create(Material, this);
+						Shared = UMaterialInstanceDynamic::Create(Source, this);
 					}
 					Dynamic = Shared;
 					Component->SetMaterial(Slot, Dynamic);
@@ -750,6 +770,12 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 					// Less sand drifted onto ledges, deeper cracks.
 					Dynamic->SetScalarParameterValue(TEXT("SandOnFloors"), 0.4f);
 					Dynamic->SetScalarParameterValue(TEXT("NormalStrength"), 1.6f);
+					ArenaLayout::UseTextures(Dynamic, TEXT("Stone"), bRuinStone ? TEXT("CrackedSandstone") : TEXT("SandstoneBlocks"));
+					ArenaLayout::UseTextures(Dynamic, TEXT("Sand"), TEXT("DesertSand"));
+				}
+				else if (Base->GetName() == TEXT("M_Dunes"))
+				{
+					ArenaLayout::UseTextures(Dynamic, TEXT("Sand"), TEXT("DesertSand"));
 				}
 			}
 		}

@@ -10,6 +10,7 @@
 #include "VulcanBoss.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "AudioMixerBlueprintLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Camera/CameraActor.h"
@@ -257,7 +258,14 @@ void UGroundCheckSubsystem::StartLockShot()
 	{
 		After(6.4f + i * 0.5f, [this, i]() { Shot(FString::Printf(TEXT("lock_%02d"), i)); });
 	}
-	After(19.5f, []() { FPlatformMisc::RequestExit(false); });
+
+	// Everything heard during the run, to Saved/SpearShots/lock_audio.wav (the wav is written in the background).
+	UAudioMixerBlueprintLibrary::StartRecordingOutput(World, 20.f);
+	After(19.5f, [World]()
+	{
+		UAudioMixerBlueprintLibrary::StopRecordingOutput(World, EAudioRecordingExportType::WavFile, TEXT("lock_audio"), FPaths::ProjectSavedDir() / TEXT("SpearShots"));
+	});
+	After(21.f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartFireShot()

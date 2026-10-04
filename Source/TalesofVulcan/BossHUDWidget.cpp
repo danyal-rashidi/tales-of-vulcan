@@ -1,5 +1,7 @@
 #include "BossHUDWidget.h"
+#include "GameAudio.h"
 #include "HealthComponent.h"
+#include "Components/AudioComponent.h"
 #include "VulcanBoss.h"
 #include "Blueprint/WidgetTree.h"
 #include "Brushes/SlateColorBrush.h"
@@ -133,7 +135,22 @@ void UBossHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 		DefeatedTime += InDeltaTime;
 		BossBar->SetRenderOpacity(FMath::Clamp(1.f - DefeatedTime, 0.f, 1.f));
 		Victory->SetRenderOpacity(FMath::Clamp((DefeatedTime - 1.5f) / 1.5f, 0.f, 1.f));
+		if (Music)
+		{
+			Music->FadeOut(4.f, 0.f);
+			Music = nullptr;
+		}
+		if (!bVictoryToll && DefeatedTime >= 1.5f)
+		{
+			bVictoryToll = true;
+			GameAudio::Play2D(this, TEXT("Bell"), 0.9f, 0.5f);
+		}
 		return;
+	}
+
+	if (!Vulcan->IsStatue() && !Music)
+	{
+		Music = GameAudio::Loop2D(this, TEXT("BossMusicLoop"), 0.55f);
 	}
 
 	const float Shown = Vulcan->IsStatue() ? 0.f : 1.f;

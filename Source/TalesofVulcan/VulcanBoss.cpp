@@ -1,4 +1,5 @@
 #include "VulcanBoss.h"
+#include "GameAudio.h"
 #include "HealthComponent.h"
 #include "VulcanProjectile.h"
 #include "AIController.h"
@@ -392,6 +393,7 @@ void AVulcanBoss::StrikeStatue()
 	const FVector Target = GetActorLocation() + FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.8f);
 	BuildBolt(Target);
 	OnStatueStruck(Target);
+	GameAudio::Play2D(this, TEXT("Thunder"), 1.4f);
 	SetQuakeStrength(1.6f); // thunder jolt
 
 	const float StrikeTime = FMath::Max(LightningStrikeTime, 0.05f);
@@ -404,6 +406,11 @@ void AVulcanBoss::BeginShaking()
 {
 	IntroState = EIntroState::Awakening;
 	OnStatueAwakening();
+
+	// A deep rumble (thunder slowed down) and the statue's stone cracking.
+	GameAudio::Play2D(this, TEXT("Thunder"), 1.1f, 0.4f);
+	GameAudio::Play(this, TEXT("Crack"), GetActorLocation(), 1.f, 0.6f, 6000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetActorLocation(), 2.f, 0.8f, 6000.f);
 
 	if (bShowDebug && GEngine)
 	{
@@ -761,6 +768,11 @@ void AVulcanBoss::FinishAwakening()
 
 	ApplyOtterLook();
 	OnStatueTransformed();
+
+	// Creature sounds pitched down a lot for Vulcan's size, two layered for the wake-up roar.
+	GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.2f, 0.6f, 9000.f);
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 0.9f, 0.5f, 9000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetActorLocation(), 2.f, 0.7f, 6000.f);
 
 	StartFight();
 	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.f; // a beat to react before the first attack
@@ -1542,12 +1554,14 @@ void AVulcanBoss::FinishAttack()
 void AVulcanBoss::StartTailLash()
 {
 	PlayMontageScaled(TailLashMontage);
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 1.3f, 0.7f, 6000.f);
 	Schedule(AttackTimer, &AVulcanBoss::TailLashHit, TailLashHitDelay / GetSpeedScale());
 }
 
 void AVulcanBoss::TailLashHit()
 {
 	const float HalfArc = TailLashArcDegrees * 0.5f;
+	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.6f, 0.45f, 5000.f);
 
 	if (bShowDebug)
 	{
@@ -1580,6 +1594,7 @@ void AVulcanBoss::SpitFire()
 
 		const FVector Muzzle = GetActorTransform().TransformPosition(SpitMuzzleOffset);
 		const FRotator BaseRotation = (Player->GetActorLocation() - Muzzle).Rotation();
+		GameAudio::Play(this, TEXT("Spit"), Muzzle, 1.6f, 0.7f, 6000.f);
 		const int32 Count = FMath::Max(1, bPhaseTwo ? PhaseTwoSpitShardCount : SpitShardCount);
 
 		FActorSpawnParameters Params;
@@ -1613,6 +1628,7 @@ void AVulcanBoss::StartBreath()
 {
 	PlayMontageScaled(BreathMontage);
 	OnBreathWindup();
+	GameAudio::Play(this, TEXT("Inhale"), GetActorLocation(), 3.f, 0.5f, 6000.f);
 	Schedule(AttackTimer, &AVulcanBoss::BeginBreathing, BreathWindup / GetSpeedScale());
 }
 
@@ -1620,6 +1636,7 @@ void AVulcanBoss::BeginBreathing()
 {
 	BreathTimeRemaining = BreathDuration + (bPhaseTwo ? PhaseTwoBreathExtraDuration : 0.f);
 	OnBreathStarted();
+	GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.4f, 0.7f, 7000.f); // the flames' roar comes from FireFX
 
 	// Visible flames from the mouth along Vulcan's facing (the damage cone in BreathTick is unchanged).
 	// The lava mouth part sits at the mouth in both otter forms (the awakened form's Muzzle is a face patch
@@ -1688,6 +1705,8 @@ void AVulcanBoss::StartDive()
 {
 	PlayMontageScaled(DiveMontage);
 	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(180.f, 70));
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 1.3f, 0.6f, 6000.f);
+	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.5f, 0.4f, 5000.f);
 	Schedule(AttackTimer, &AVulcanBoss::DiveSubmerge, DiveSubmergeTime / GetSpeedScale());
 }
 
@@ -1695,6 +1714,8 @@ void AVulcanBoss::DiveSubmerge()
 {
 	OnDiveSubmerged(GetFeetLocation());
 	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(260.f, 110));
+	GameAudio::Play(this, TEXT("Thud"), GetFeetLocation(), 1.4f, 0.45f, 6000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetFeetLocation(), 2.f, 0.8f, 5000.f);
 
 	// Disable movement before collision, otherwise Vulcan falls through the floor.
 	GetCharacterMovement()->DisableMovement();
@@ -1718,6 +1739,7 @@ void AVulcanBoss::DiveShowWarning()
 
 	const float WarningTime = DiveWarningTime / GetSpeedScale();
 	AFireFX::Spawn(GetWorld(), Ground, AFireFX::EmbersPreset(DiveRadius, WarningTime));
+	GameAudio::Play(this, TEXT("Thunder"), Ground, 1.2f, 0.35f, 5000.f); // rumbling underground
 	if (bShowDebug)
 	{
 		DrawDebugCircle(GetWorld(), Ground + FVector(0.f, 0.f, 5.f), DiveRadius, 32, FColor::Orange, false, WarningTime, 0, 4.f, FVector(1.f, 0.f, 0.f), FVector(0.f, 1.f, 0.f), false);
@@ -1738,6 +1760,9 @@ void AVulcanBoss::DiveEmerge()
 	const FVector Ground = GetFeetLocation();
 	OnDiveEmerged(Ground);
 	AFireFX::Spawn(GetWorld(), Ground, AFireFX::BurstPreset(DiveRadius, 160));
+	GameAudio::Play(this, TEXT("Thud"), Ground, 1.6f, 0.4f, 7000.f);
+	GameAudio::Play(this, TEXT("Stones"), Ground, 2.f, 0.7f, 5000.f);
+	GameAudio::Play(this, TEXT("Roar"), Ground, 1.2f, 0.65f, 7000.f);
 
 	if (APawn* Player = GetPlayer())
 	{
@@ -1803,6 +1828,7 @@ void AVulcanBoss::HandleHealthChanged(float NewHealth, float MaxHealth)
 	{
 		NextHitReactTime = GetWorld()->GetTimeSeconds() + HitReactCooldown;
 		PlayMontageScaled(HitReactMontage);
+		GameAudio::Play(this, TEXT("Hurt"), GetActorLocation(), 1.5f, 0.7f, 6000.f);
 	}
 
 	if (!bPhaseTwo && NewHealth > 0.f && MaxHealth > 0.f && NewHealth / MaxHealth <= PhaseTwoHealthPercent)
@@ -1810,6 +1836,8 @@ void AVulcanBoss::HandleHealthChanged(float NewHealth, float MaxHealth)
 		bPhaseTwo = true;
 		GetCharacterMovement()->MaxWalkSpeed = WalkSpeed * PhaseTwoSpeedMultiplier;
 		OnPhaseTwoStarted();
+		GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.4f, 0.55f, 9000.f);
+		GameAudio::Play2D(this, TEXT("Thunder"), 1.f, 0.7f);
 	}
 }
 
@@ -1841,6 +1869,8 @@ void AVulcanBoss::HandleDeath(AActor* Killer)
 
 	StopAnimMontage();
 	PlayMontageScaled(DeathMontage);
+	GameAudio::Play(this, TEXT("Death"), GetActorLocation(), 1.2f, 0.6f, 9000.f);
+	GameAudio::Play(this, TEXT("Thud"), GetActorLocation(), 1.3f, 0.4f, 7000.f);
 	GetCharacterMovement()->DisableMovement();
 
 	// Lava cools to black, eyes and core glow go out.

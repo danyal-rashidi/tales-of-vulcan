@@ -1,4 +1,6 @@
 #include "FireFX.h"
+#include "GameAudio.h"
+#include "Components/AudioComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
@@ -77,6 +79,8 @@ FFireSettings AFireFX::BreathPreset(float Range, float HalfAngleDegrees, float D
 	S.Stretch = 2.2f;
 	S.Mix = FVector(0.35f, 0.45f, 0.2f);
 	S.LightIntensity = 120.f;
+	S.SoundVolume = 2.5f;
+	S.SoundRange = 3500.f;
 	S.LightRadius = Range * 1.6f;
 	return S;
 }
@@ -98,6 +102,8 @@ FFireSettings AFireFX::BurstPreset(float Radius, int32 Count)
 	S.Mix = FVector(0.2f, 0.5f, 0.3f);
 	S.LightIntensity = 250.f;
 	S.LightRadius = FMath::Max(Radius * 4.f, 900.f);
+	S.SoundVolume = 2.5f;
+	S.SoundRange = 4000.f;
 	return S;
 }
 
@@ -118,6 +124,7 @@ FFireSettings AFireFX::EmbersPreset(float Radius, float Duration)
 	S.Mix = FVector(0.3f, 0.4f, 0.3f);
 	S.LightIntensity = 30.f;
 	S.LightRadius = Radius * 2.f;
+	S.SoundVolume = 0.8f;
 	return S;
 }
 
@@ -138,6 +145,7 @@ FFireSettings AFireFX::GroundFirePreset(float Radius, float Duration)
 	S.Mix = FVector(0.25f, 0.5f, 0.25f);
 	S.LightIntensity = 90.f;
 	S.LightRadius = Radius * 2.f;
+	S.SoundVolume = 1.5f;
 	return S;
 }
 
@@ -158,6 +166,8 @@ FFireSettings AFireFX::TorchPreset(float Radius)
 	S.Mix = FVector(0.3f, 0.5f, 0.2f);
 	S.LightIntensity = 160.f;
 	S.LightRadius = 1600.f;
+	S.SoundVolume = 0.7f;
+	S.SoundRange = 1500.f;
 	return S;
 }
 
@@ -222,6 +232,11 @@ void AFireFX::Start(const FFireSettings& InSettings, USceneComponent* InFollow)
 
 	Light->SetAttenuationRadius(Settings.LightRadius);
 	Light->SetVisibility(Settings.LightIntensity > 0.f);
+	if (Settings.SoundVolume > 0.f)
+	{
+		// Stays where the effect started (stops with this actor); a breath barely moves while it lasts.
+		Audio = GameAudio::Loop(this, TEXT("FireLoop"), RootComponent, GetActorLocation(), Settings.SoundVolume, Settings.SoundRange);
+	}
 	Light->SetWorldLocation(EmitterLocation());
 
 	for (int32 i = 0; i < Settings.Burst; ++i)
@@ -386,6 +401,12 @@ void AFireFX::Tick(float DeltaSeconds)
 		{
 			Light->SetWorldLocation(Sum / Alive);
 		}
+	}
+
+	if (!bEmitting && Audio)
+	{
+		Audio->FadeOut(0.6f, 0.f);
+		Audio = nullptr;
 	}
 
 	if (!bEmitting && Alive == 0)
