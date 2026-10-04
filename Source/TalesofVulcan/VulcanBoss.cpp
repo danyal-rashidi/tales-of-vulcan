@@ -5,7 +5,12 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
+#include "Components/VolumetricCloudComponent.h"
+#include "EngineUtils.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
@@ -14,6 +19,9 @@
 #include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/DamageType.h"
+#include "DriftParticles.h"
+#include "EarthquakeCameraShake.h"
+#include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -165,8 +173,12 @@ void AVulcanBoss::BeginPlay()
 	HealthComponent->OnHealthChanged.AddDynamic(this, &AVulcanBoss::HandleHealthChanged);
 	HealthComponent->OnDeath.AddDynamic(this, &AVulcanBoss::HandleDeath);
 
+	RebindOtterParts();
+
 	MeshRestLocation = GetMesh()->GetRelativeLocation();
 	StatueRestLocation = StatueMesh->GetRelativeLocation();
+	MeshRestRotation = GetMesh()->GetRelativeRotation();
+	StatueRestRotation = StatueMesh->GetRelativeRotation();
 
 	if (bStatueIntro)
 	{
@@ -191,8 +203,35 @@ void AVulcanBoss::OnConstruction(const FTransform& Transform)
 	// Show the statue look in the editor too, so the sculpture model can be lined up.
 	IntroState = bStatueIntro ? EIntroState::Statue : EIntroState::Done;
 
+	RebindOtterParts();
 	ApplyOtterLook();
 	UpdateOtterBody();
+}
+
+void AVulcanBoss::RebindOtterParts()
+{
+	if (OtterParts.Num() == OtterBody::Count && !OtterParts.Contains(nullptr))
+	{
+		return;
+	}
+
+	TArray<UStaticMeshComponent*> Components;
+	GetComponents(Components);
+
+	OtterParts.Reset();
+	OtterParts.SetNum(OtterBody::Count);
+	for (int32 i = 0; i < OtterBody::Count; ++i)
+	{
+		const FName PartName(FString(TEXT("Otter_")) + OtterBody::Names[i]);
+		for (UStaticMeshComponent* Component : Components)
+		{
+			if (Component && Component->GetFName() == PartName)
+			{
+				OtterParts[i] = Component;
+				break;
+			}
+		}
+	}
 }
 
 // ============================================================ Otter body
@@ -217,6 +256,35 @@ void AVulcanBoss::AwakenFromStatue()
 		return;
 	}
 
+	CaptureSky();
+
+	if (bLightningStrike)
+	{
+		StrikeStatue();
+	}
+	else
+	{
+		BeginShaking();
+	}
+}
+
+void AVulcanBoss::StrikeStatue()
+{
+	IntroState = EIntroState::Struck;
+
+	const FVector Target = GetActorLocation() + FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.8f);
+	BuildBolt(Target);
+	OnStatueStruck(Target);
+	SetQuakeStrength(1.6f); // thunder jolt
+
+	const float StrikeTime = FMath::Max(LightningStrikeTime, 0.05f);
+	BoltEndTime = GetWorld()->GetTimeSeconds() + StrikeTime;
+	GetWorldTimerManager().SetTimer(BoltTimer, this, &AVulcanBoss::FlickerBolt, 0.05f, true);
+	GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::BeginShaking, StrikeTime, false);
+}
+
+void AVulcanBoss::BeginShaking()
+{
 	IntroState = EIntroState::Awakening;
 	OnStatueAwakening();
 
@@ -228,13 +296,339 @@ void AVulcanBoss::AwakenFromStatue()
 	GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FinishAwakening, FMath::Max(StatueAwakenTime, 0.05f), false);
 }
 
+void AVulcanBoss::BuildBolt(const FVector& Target)
+{
+	ClearBolt();
+
+	UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Cylinder)
+	{
+		return;
+	}
+
+	UMaterialInstanceDynamic* BoltMaterial = BaseMaterial ? UMaterialInstanceDynamic::Create(BaseMaterial, this) : nullptr;
+	if (BoltMaterial)
+	{
+		BoltMaterial->SetVectorParameterValue(TEXT("Color"), LightningColor);
+		BoltMaterial->SetScalarParameterValue(TEXT("Glow"), 80.f);
+		BoltMaterial->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		BoltMaterial->SetScalarParameterValue(TEXT("Roughness"), 1.f);
+	}
+
+	// Engine cylinder is 100 tall and 100 wide with its pivot in the middle.
+	auto AddSegment = [&](const FVector& A, const FVector& B, float Thickness)
+	{
+		const FVector Dir = B - A;
+		const float Length = Dir.Size();
+		if (Length < KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+		UStaticMeshComponent* Segment = NewObject<UStaticMeshComponent>(this);
+		Segment->SetStaticMesh(Cylinder);
+		Segment->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Segment->SetCastShadow(false);
+		Segment->SetCanEverAffectNavigation(false);
+		if (BoltMaterial)
+		{
+			Segment->SetMaterial(0, BoltMaterial);
+		}
+		Segment->RegisterComponent();
+		Segment->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZ(Dir / Length).Rotator(), (A + B) * 0.5f,
+			FVector(Thickness, Thickness, Length + Thickness * 0.5f) / 100.f));
+		BoltParts.Add(Segment);
+	};
+
+	// Jagged main bolt from high in the sky down to the statue.
+	const FVector SkyPoint = Target + FVector(FMath::FRandRange(-700.f, 700.f), FMath::FRandRange(-700.f, 700.f), 6000.f);
+	constexpr int32 Steps = 18;
+	TArray<FVector> Points;
+	for (int32 i = 0; i <= Steps; ++i)
+	{
+		const float T = static_cast<float>(i) / Steps;
+		FVector Point = FMath::Lerp(SkyPoint, Target, T);
+		if (i > 0 && i < Steps)
+		{
+			Point += FVector(FMath::FRandRange(-1.f, 1.f), FMath::FRandRange(-1.f, 1.f), 0.f) * 260.f * (1.f - 0.7f * T);
+		}
+		Points.Add(Point);
+	}
+	for (int32 i = 1; i < Points.Num(); ++i)
+	{
+		AddSegment(Points[i - 1], Points[i], 18.f);
+	}
+
+	// A few forks splitting off the main bolt.
+	for (int32 Fork = 0; Fork < 3; ++Fork)
+	{
+		const int32 From = FMath::RandRange(2, Steps - 6);
+		FVector Prev = Points[From];
+		FVector Dir = ((Points[From + 1] - Points[From]).GetSafeNormal() + FMath::VRand() * 0.8f).GetSafeNormal();
+		Dir.Z = -FMath::Abs(Dir.Z) - 0.3f;
+		for (int32 k = 0; k < 5; ++k)
+		{
+			const FVector Next = Prev + (Dir + FMath::VRand() * 0.35f).GetSafeNormal() * FMath::FRandRange(180.f, 320.f);
+			AddSegment(Prev, Next, 8.f - k);
+			Prev = Next;
+		}
+	}
+
+	BoltFlash = NewObject<UPointLightComponent>(this);
+	BoltFlash->SetIntensityUnits(ELightUnits::Candelas);
+	BoltFlash->SetLightColor(LightningColor);
+	BoltFlash->SetAttenuationRadius(9000.f);
+	BoltFlash->SetCastShadows(true);
+	BoltFlash->RegisterComponent();
+	BoltFlash->SetWorldLocation(Target + FVector(0.f, 0.f, 400.f));
+	BoltFlash->SetIntensity(60000.f);
+}
+
+void AVulcanBoss::FlickerBolt()
+{
+	if (GetWorld()->GetTimeSeconds() >= BoltEndTime)
+	{
+		ClearBolt();
+		return;
+	}
+
+	// Real lightning strobes a few times before it fades.
+	const bool bOn = FMath::FRand() > 0.3f;
+	for (UStaticMeshComponent* Segment : BoltParts)
+	{
+		if (Segment)
+		{
+			Segment->SetVisibility(bOn);
+		}
+	}
+	if (BoltFlash)
+	{
+		BoltFlash->SetIntensity(bOn ? 60000.f * FMath::FRandRange(0.5f, 1.f) : 0.f);
+	}
+}
+
+void AVulcanBoss::ClearBolt()
+{
+	GetWorldTimerManager().ClearTimer(BoltTimer);
+	for (UStaticMeshComponent* Segment : BoltParts)
+	{
+		if (Segment)
+		{
+			Segment->DestroyComponent();
+		}
+	}
+	BoltParts.Reset();
+	if (BoltFlash)
+	{
+		BoltFlash->DestroyComponent();
+		BoltFlash = nullptr;
+	}
+}
+
+// ============================================================ Storm sky
+
+void AVulcanBoss::CaptureSky()
+{
+	if (!bStormSky || bSkyCaptured)
+	{
+		return;
+	}
+
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (UDirectionalLightComponent* Light = It->FindComponentByClass<UDirectionalLightComponent>())
+		{
+			// Prefer the light that drives the sky (the sun).
+			if (!Sun.IsValid() || Light->IsUsedAsAtmosphereSunLight())
+			{
+				Sun = Light;
+			}
+		}
+		if (!Atmosphere.IsValid()) { Atmosphere = It->FindComponentByClass<USkyAtmosphereComponent>(); }
+		if (!Clouds.IsValid())     { Clouds = It->FindComponentByClass<UVolumetricCloudComponent>(); }
+		if (!Fog.IsValid())        { Fog = It->FindComponentByClass<UExponentialHeightFogComponent>(); }
+	}
+
+	if (Sun.IsValid())
+	{
+		SunStartColor = Sun->GetLightColor();
+		SunStartIntensity = Sun->Intensity;
+		SunStartRotation = Sun->GetComponentRotation();
+	}
+
+	// Where the sun ends up. A directional light shines along its forward vector, so the sun
+	// itself sits in the opposite direction: face the light away from the spot it should appear.
+	SunTargetRotation = FRotator(StormSunPitch, SunStartRotation.Yaw, 0.f);
+	if (bSunBehindVulcan)
+	{
+		if (const APawn* Player = GetPlayer())
+		{
+			const FVector PlayerToVulcan = (GetActorLocation() - Player->GetActorLocation()).GetSafeNormal2D();
+			if (!PlayerToVulcan.IsNearlyZero())
+			{
+				SunTargetRotation.Yaw = PlayerToVulcan.Rotation().Yaw + 180.f + SunSideOffset;
+			}
+		}
+	}
+	if (Atmosphere.IsValid())
+	{
+		SkyStartTint = Atmosphere->SkyLuminanceFactor;
+	}
+	if (Fog.IsValid())
+	{
+		FogStartColor = Fog->FogInscatteringLuminance;
+		FogStartDensity = Fog->FogDensity;
+	}
+	UMaterialInterface* CloudBase = Clouds.IsValid() ? Clouds->Material.LoadSynchronous() : nullptr;
+	if (CloudBase)
+	{
+		CloudMaterial = UMaterialInstanceDynamic::Create(CloudBase, this);
+		Clouds->SetMaterial(CloudMaterial);
+		CloudMaterial->GetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), CloudStartCoverage);
+		CloudMaterial->GetScalarParameterValue(TEXT("Cloud_GlobalDensity"), CloudStartDensity);
+		CloudMaterial->GetVectorParameterValue(TEXT("Cloud_AlbedoColor"), CloudStartAlbedo);
+		CloudMaterial->GetVectorParameterValue(TEXT("Storm_AlbedoColor"), CloudStartStormAlbedo);
+	}
+
+	bSkyCaptured = true;
+}
+
+void AVulcanBoss::ApplyStorm(float Alpha)
+{
+	if (!bStormSky || !bSkyCaptured)
+	{
+		return;
+	}
+
+	const float A = FMath::Clamp(Alpha, 0.f, 1.f);
+	StormAlpha = A;
+
+	// Blood rain starts once the sky has mostly turned red, full by the time Vulcan wakes.
+	for (TActorIterator<ADriftParticles> It(GetWorld()); It; ++It)
+	{
+		if (It->bWaitForStorm)
+		{
+			It->Intensity = FMath::Clamp((A - 0.65f) / 0.35f, 0.f, 1.f);
+		}
+	}
+
+	if (Sun.IsValid())
+	{
+		Sun->SetLightColor(FMath::Lerp(SunStartColor, BloodSunColor, A));
+		Sun->SetIntensity(FMath::Lerp(SunStartIntensity, BloodSunIntensity, A));
+		Sun->SetWorldRotation(FQuat::Slerp(SunStartRotation.Quaternion(), SunTargetRotation.Quaternion(), A));
+	}
+	if (Atmosphere.IsValid())
+	{
+		Atmosphere->SetSkyLuminanceFactor(FMath::Lerp(SkyStartTint, StormSkyTint, A));
+	}
+	if (Fog.IsValid())
+	{
+		Fog->SetFogInscatteringColor(FMath::Lerp(FogStartColor, StormFogColor, A));
+		Fog->SetFogDensity(FMath::Lerp(FogStartDensity, StormFogDensity, A));
+	}
+	if (CloudMaterial)
+	{
+		// Clouds keep their alpha channel (it holds a material setting, not opacity).
+		FLinearColor Albedo = FMath::Lerp(CloudStartAlbedo, StormCloudColor, A);
+		Albedo.A = CloudStartAlbedo.A;
+		FLinearColor StormAlbedo = FMath::Lerp(CloudStartStormAlbedo, StormCloudColor, A);
+		StormAlbedo.A = CloudStartStormAlbedo.A;
+
+		CloudMaterial->SetScalarParameterValue(TEXT("Cloud_GlobalCoverage"), FMath::Lerp(CloudStartCoverage, StormCloudCoverage, A));
+		CloudMaterial->SetScalarParameterValue(TEXT("Cloud_GlobalDensity"), FMath::Lerp(CloudStartDensity, StormCloudDensity, A));
+		CloudMaterial->SetVectorParameterValue(TEXT("Cloud_AlbedoColor"), Albedo);
+		CloudMaterial->SetVectorParameterValue(TEXT("Storm_AlbedoColor"), StormAlbedo);
+	}
+}
+
+void AVulcanBoss::SetQuakeStrength(float Scale)
+{
+	if (!bEarthquake)
+	{
+		return;
+	}
+	if (!Quake.IsValid())
+	{
+		if (APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		{
+			Quake = Camera->StartCameraShake(UEarthquakeCameraShake::StaticClass(), 1.f);
+		}
+	}
+	if (Quake.IsValid())
+	{
+		Quake->ShakeScale = Scale * EarthquakeStrength;
+	}
+}
+
+void AVulcanBoss::StopQuake()
+{
+	if (Quake.IsValid())
+	{
+		if (APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		{
+			Camera->StopCameraShake(Quake.Get(), false); // blend out
+		}
+	}
+	Quake = nullptr;
+}
+
+void AVulcanBoss::UpdateBloodSun()
+{
+	if (!bStormSky || BloodSunSize <= 0.f)
+	{
+		return;
+	}
+
+	APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
+	if (!Camera)
+	{
+		return;
+	}
+
+	if (!BloodSunDisk)
+	{
+		UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+		UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!Sphere || !BaseMaterial)
+		{
+			return;
+		}
+		BloodSunMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+		BloodSunMaterial->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		BloodSunMaterial->SetScalarParameterValue(TEXT("Roughness"), 1.f);
+
+		BloodSunDisk = NewObject<UStaticMeshComponent>(this);
+		BloodSunDisk->SetStaticMesh(Sphere);
+		BloodSunDisk->SetMaterial(0, BloodSunMaterial);
+		BloodSunDisk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		BloodSunDisk->SetCastShadow(false);
+		BloodSunDisk->SetCanEverAffectNavigation(false);
+		BloodSunDisk->SetAbsolute(true, true, true);
+		BloodSunDisk->RegisterComponent();
+	}
+
+	// The sun sits opposite the direction the light shines.
+	const FVector SunDirection = Sun.IsValid() ? -Sun->GetForwardVector() : -SunTargetRotation.Vector();
+	constexpr float Distance = 40000.f; // far beyond the colosseum, in front of the clouds
+	const float Diameter = 2.f * Distance * FMath::Tan(FMath::DegreesToRadians(BloodSunSize * 0.5f));
+
+	BloodSunDisk->SetWorldLocation(Camera->GetCameraLocation() + SunDirection * Distance);
+	BloodSunDisk->SetWorldScale3D(FVector(Diameter / 100.f));
+	BloodSunMaterial->SetVectorParameterValue(TEXT("Color"), BloodSunColor);
+	BloodSunMaterial->SetScalarParameterValue(TEXT("Glow"), BloodSunGlow * StormAlpha * StormAlpha);
+	BloodSunDisk->SetVisibility(StormAlpha > 0.02f);
+}
+
 void AVulcanBoss::FinishAwakening()
 {
 	IntroState = EIntroState::Done;
+	ApplyStorm(1.f);
 
 	GetMesh()->bPauseAnims = false;
-	GetMesh()->SetRelativeLocation(MeshRestLocation);
-	StatueMesh->SetRelativeLocation(StatueRestLocation);
+	GetMesh()->SetRelativeLocationAndRotation(MeshRestLocation, MeshRestRotation);
+	StatueMesh->SetRelativeLocationAndRotation(StatueRestLocation, StatueRestRotation);
+	StopQuake();
 	HealthComponent->bInvulnerable = false;
 
 	ApplyOtterLook();
@@ -317,7 +711,7 @@ void AVulcanBoss::ApplyOtterLook()
 void AVulcanBoss::UpdateOtterBody()
 {
 	USkeletalMeshComponent* Body = GetMesh();
-	if (!bUseOtterBody || !Body || OtterParts.Num() != OtterBody::Count)
+	if (!bUseOtterBody || !Body || OtterParts.Num() != OtterBody::Count || OtterParts.Contains(nullptr))
 	{
 		return;
 	}
@@ -395,8 +789,10 @@ void AVulcanBoss::UpdateOtterBody()
 	const FVector HR = HeadAxes.GetScaledAxis(EAxis::Y);
 	const FVector HU = HeadAxes.GetScaledAxis(EAxis::Z);
 	// Big chibi head (radii 30 deep, 34 wide, 29 tall). Every face feature is placed on its surface.
+	// Head-local sizes below are multiplied by HeadScale (K), so the whole head grows as one piece.
+	const float K = FMath::Max(HeadScale, 0.01f);
 	const FVector HeadRadii(30.f, 34.f, 29.f);
-	const FVector HeadCenter = HeadBone + (HU * 22.f + HF * 2.f) * S;
+	const FVector HeadCenter = HeadBone + (HU * 22.f + HF * 2.f) * S * K;
 
 	// Distance from head center to the face surface at a given sideways/up offset (cm).
 	auto FaceDepth = [&HeadRadii](float SideCm, float UpCm)
@@ -406,14 +802,18 @@ void AVulcanBoss::UpdateOtterBody()
 	};
 	auto OnFace = [&](float SideCm, float UpCm, float OutCm)
 	{
-		return HeadCenter + (HR * SideCm + HU * UpCm + HF * (FaceDepth(SideCm, UpCm) + OutCm)) * S;
+		return HeadCenter + (HR * SideCm + HU * UpCm + HF * (FaceDepth(SideCm, UpCm) + OutCm)) * S * K;
+	};
+	auto HeadBlob = [&](int32 Part, const FVector& Center, const FMatrix& Axes, const FVector& SizeCm)
+	{
+		Blob(Part, Center, Axes, SizeCm * K);
 	};
 
-	Blob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
+	HeadBlob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
 	// Muzzle: a wide cream bulge over the lower face and cheeks, like the reference.
-	Blob(Muzzle, OnFace(0.f, -12.f, -14.f), HeadAxes, FVector(32.f, 54.f, 30.f));
-	Blob(Nose, OnFace(0.f, -4.f, 2.f), HeadAxes, FVector(6.f, 9.f, 6.f));
-	Blob(Bridge, OnFace(0.f, 4.f, 0.9f), HeadAxes, FVector(1.6f, 6.f, 1.6f));
+	HeadBlob(Muzzle, OnFace(0.f, -12.f, -14.f), HeadAxes, FVector(32.f, 54.f, 30.f));
+	HeadBlob(Nose, OnFace(0.f, -4.f, 2.f), HeadAxes, FVector(6.f, 9.f, 6.f));
+	HeadBlob(Bridge, OnFace(0.f, 4.f, 0.9f), HeadAxes, FVector(1.6f, 6.f, 1.6f));
 
 	const float EyeSide = 12.f;
 	const float EyeUp = 3.f;
@@ -425,8 +825,8 @@ void AVulcanBoss::UpdateOtterBody()
 
 		// Big glossy eyes with a white catchlight.
 		const FVector EyeCenter = OnFace(EyeSide * Sign, EyeUp, 0.4f);
-		Blob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(3.f, 9.f, 11.f));
-		Blob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 1.4f + HU * 3.f - HR * 2.f) * S, HeadAxes, FVector(1.f, 2.8f, 3.2f));
+		HeadBlob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(3.f, 9.f, 11.f));
+		HeadBlob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 1.4f + HU * 3.f - HR * 2.f) * S * K, HeadAxes, FVector(1.f, 2.8f, 3.2f));
 
 		// Round glasses: a ring of beads hugging the face around each eye (see-through).
 		for (int32 b = 0; b < RimBeads; ++b)
@@ -437,23 +837,23 @@ void AVulcanBoss::UpdateOtterBody()
 			const FVector Tangent = (-HR * FMath::Sin(Angle) + HU * FMath::Cos(Angle)).GetSafeNormal();
 			const FMatrix BeadAxes = FRotationMatrix::MakeFromZX(Tangent, HF);
 			const float BeadLength = 2.f * PI * RimRadius / RimBeads + 1.5f; // overlap neighbours into a smooth ring
-			Blob((Side == 0 ? RimL0 : RimR0) + b, OnFace(BeadSide, BeadUp, 0.9f), BeadAxes, FVector(1.8f, 1.8f, BeadLength));
+			HeadBlob((Side == 0 ? RimL0 : RimR0) + b, OnFace(BeadSide, BeadUp, 0.9f), BeadAxes, FVector(1.8f, 1.8f, BeadLength));
 		}
 
 		// Little eyebrow dots.
-		Blob(Side == 0 ? BrowDotL : BrowDotR, OnFace(10.f * Sign, 15.f, 0.2f), HeadAxes, FVector(1.5f, 4.5f, 2.8f));
+		HeadBlob(Side == 0 ? BrowDotL : BrowDotR, OnFace(10.f * Sign, 15.f, 0.2f), HeadAxes, FVector(1.5f, 4.5f, 2.8f));
 
 		// Round ears with a light inside, up on the top corners of the head.
-		const FVector EarCenter = HeadCenter + (HR * 23.f * Sign + HU * 19.f - HF * 3.f) * S;
-		Blob(Side == 0 ? EarL : EarR, EarCenter, HeadAxes, FVector(8.f, 15.f, 15.f));
-		Blob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 3.5f * S, HeadAxes, FVector(2.f, 9.f, 9.f));
+		const FVector EarCenter = HeadCenter + (HR * 23.f * Sign + HU * 19.f - HF * 3.f) * S * K;
+		HeadBlob(Side == 0 ? EarL : EarR, EarCenter, HeadAxes, FVector(8.f, 15.f, 15.f));
+		HeadBlob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 3.5f * S * K, HeadAxes, FVector(2.f, 9.f, 9.f));
 
 		// Three whiskers fanning out from each cheek.
 		for (int32 k = 0; k < 3; ++k)
 		{
 			const FVector Root = OnFace(15.f * Sign, -9.f - k * 2.5f, -0.5f);
-			const FVector Tip = Root + (HR * 17.f * Sign - HF * 2.f + HU * (4.f - k * 4.f)) * S;
-			Limb((Side == 0 ? WhiskerL0 : WhiskerR0) + k, Root, Tip, 0.35f);
+			const FVector Tip = Root + (HR * 17.f * Sign - HF * 2.f + HU * (4.f - k * 4.f)) * S * K;
+			Limb((Side == 0 ? WhiskerL0 : WhiskerR0) + k, Root, Tip, 0.35f * K);
 		}
 	}
 
@@ -529,8 +929,8 @@ void AVulcanBoss::UpdateOtterBody()
 	const float PeakWidth[3] = { 9.f, 12.f, 9.f };
 	for (int32 k = 0; k < 3; ++k)
 	{
-		const FVector Base = HeadCenter + (HU * 25.f - HF * 3.f + HR * PeakSide[k]) * S;
-		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.05f) - HF * 0.3f, PeakLength[k], PeakWidth[k]);
+		const FVector Base = HeadCenter + (HU * 25.f - HF * 3.f + HR * PeakSide[k]) * S * K;
+		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.05f) - HF * 0.3f, PeakLength[k] * K, PeakWidth[k] * K);
 	}
 
 	const FVector TailLean = Up - Sway.RotateVector(Fwd) * 0.4f;
@@ -553,7 +953,7 @@ void AVulcanBoss::StartFight()
 		AwakenFromStatue(); // the fight starts once the transformation finishes
 		return;
 	}
-	if (bFightActive || bDead || IntroState == EIntroState::Awakening)
+	if (bFightActive || bDead || IntroState != EIntroState::Done)
 	{
 		return;
 	}
@@ -576,9 +976,24 @@ void AVulcanBoss::Tick(float DeltaSeconds)
 	{
 		// Shake harder and harder until it breaks free.
 		const float Progress = 1.f - GetWorldTimerManager().GetTimerRemaining(IntroTimer) / FMath::Max(StatueAwakenTime, 0.05f);
-		const FVector Jitter = FMath::VRand() * AwakenShake * FMath::Clamp(Progress, 0.2f, 1.f);
-		GetMesh()->SetRelativeLocation(MeshRestLocation + Jitter);
-		StatueMesh->SetRelativeLocation(StatueRestLocation + Jitter);
+		// Earthquake: slow rolling lurches plus a fine tremor, building to the moment it breaks free.
+		const float Strength = FMath::Clamp(Progress, 0.25f, 1.f);
+		const float T = GetWorld()->GetTimeSeconds();
+		const FVector Lurch(FMath::PerlinNoise1D(T * 6.f), FMath::PerlinNoise1D(T * 7.f + 17.f), 0.4f * FMath::PerlinNoise1D(T * 9.f + 31.f));
+		const FVector Jitter = (Lurch * 2.f + FMath::VRand() * 0.25f) * AwakenShake * Strength;
+		const FRotator Wobble(FMath::PerlinNoise1D(T * 5.f + 3.f) * 2.f, FMath::PerlinNoise1D(T * 4.f + 11.f), FMath::PerlinNoise1D(T * 6.f + 7.f) * 2.f);
+		const FRotator Rock = Wobble * (AwakenWobble * Strength);
+		GetMesh()->SetRelativeLocationAndRotation(MeshRestLocation + Jitter, MeshRestRotation + Rock);
+		StatueMesh->SetRelativeLocationAndRotation(StatueRestLocation + Jitter, StatueRestRotation + Rock);
+		SetQuakeStrength(FMath::Lerp(0.6f, 1.8f, Progress));
+
+		// The storm rolls in while it shakes, fully dark by the time it comes alive.
+		ApplyStorm(FMath::SmoothStep(0.f, 1.f, Progress));
+	}
+
+	if (StormAlpha > 0.f)
+	{
+		UpdateBloodSun();
 	}
 
 	UpdateOtterBody();
