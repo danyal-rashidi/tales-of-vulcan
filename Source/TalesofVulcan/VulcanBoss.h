@@ -276,6 +276,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 
 private:
 	void Think();
@@ -315,6 +316,8 @@ private:
 	void HandleDeath(AActor* Killer);
 
 	EVulcanAttack CurrentAttack = EVulcanAttack::None;
+	/** True when there's no nav mesh path, so Tick walks straight at the player instead. */
+	bool bDirectChase = false;
 	bool bFightActive = false;
 	bool bPhaseTwo = false;
 	bool bDead = false;
