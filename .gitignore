@@ -78,3 +78,5 @@ DerivedDataCache/*
 .vscode/
 *.code-workspace
 .ignore
+# Written by Rebuild_and_Open.bat on every run
+build_log.txt
