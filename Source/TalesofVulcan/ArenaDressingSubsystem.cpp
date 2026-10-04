@@ -30,6 +30,12 @@ namespace ArenaLayout
 	const FName ColosseumMesh(TEXT("colosseum"));
 	const FName DunesMesh(TEXT("SM_Dunes"));
 
+	/** Tag on the wall-to-wall sand floor laid over the arena. */
+	const FName SandFloorTag(TEXT("ArenaSandFloor"));
+
+	/** Top of the centre floor slab; the sand floor sits just above it. */
+	constexpr float FloorTop = 2.f;
+
 	FName MeshName(const UPrimitiveComponent* Component)
 	{
 		const UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(Component);
@@ -55,7 +61,8 @@ namespace ArenaLayout
 			{
 				continue; // background scenery, no collision in play (SceneryCollisionSubsystem)
 			}
-			if ((Mesh == FloorMesh || Mesh == ColosseumMesh) && Hit.ImpactNormal.Z > 0.85f)
+			const bool bFloor = Mesh == FloorMesh || Mesh == ColosseumMesh || (Hit.GetComponent() && Hit.GetComponent()->ComponentHasTag(SandFloorTag));
+			if (bFloor && Hit.ImpactNormal.Z > 0.85f)
 			{
 				OutGround = Hit.ImpactPoint;
 				return true;
@@ -123,6 +130,8 @@ void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	SetupFog(InWorld);
 	CleanFloor(InWorld);
+	LaySandFloor(InWorld);
+	BuildStairs(InWorld);
 	BuildRuins(InWorld);
 	PlantGrass(InWorld);
 	WeatherMaterials(InWorld);
@@ -196,6 +205,206 @@ void UArenaDressingSubsystem::CleanFloor(UWorld& World)
 			}
 		}
 	}
+}
+
+void UArenaDressingSubsystem::LaySandFloor(UWorld& World)
+{
+	UStaticMesh* Disc = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	UMaterialInterface* Sand = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/ThirdPerson/Colosseum/M_Dunes.M_Dunes"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Disc || !Sand)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Floor = World.SpawnActor<AActor>(AActor::StaticClass(), FTransform(FVector(ArenaLayout::Center, 0.f)), SpawnParams);
+	if (!Floor)
+	{
+		return;
+	}
+
+	// A flat elliptical disc a little bigger than the arena, so its edge tucks into the wall,
+	// one metre thick, its top just above the old centre slab.
+	const FBox Box = Disc->GetBoundingBox();
+	const FVector Scale(
+		2.f * ArenaLayout::WallRadii.X * 1.03f / Box.GetSize().X,
+		2.f * ArenaLayout::WallRadii.Y * 1.03f / Box.GetSize().Y,
+		100.f / Box.GetSize().Z);
+	const FVector Location(ArenaLayout::Center.X, ArenaLayout::Center.Y, ArenaLayout::FloorTop - Box.Max.Z * Scale.Z);
+
+	UStaticMeshComponent* Component = NewObject<UStaticMeshComponent>(Floor, TEXT("SandFloor"));
+	Component->SetMobility(EComponentMobility::Static);
+	Component->SetStaticMesh(Disc);
+	Component->SetWorldLocation(Location);
+	Component->SetWorldScale3D(Scale);
+	Component->SetCollisionProfileName(TEXT("BlockAll"));
+	Component->SetCanEverAffectNavigation(false);
+	Component->ComponentTags.Add(ArenaLayout::SandFloorTag);
+	Floor->SetRootComponent(Component);
+	Component->RegisterComponent();
+
+	// Clean, warm arena sand (the dunes material: world-projected sand with large-scale variation).
+	if (UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Sand, this))
+	{
+		Material->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.74f, 0.64f, 0.5f));
+		Component->SetMaterial(0, Material);
+	}
+}
+
+void UArenaDressingSubsystem::BuildStairs(UWorld& World)
+{
+	UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	UStaticMesh* Chunk = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/ThirdPerson/Colosseum/World/SM_RomanBlock_B.SM_RomanBlock_B"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Cube)
+	{
+		return;
+	}
+
+	FRandomStream Random(1871);
+	int32 Stairs = 0;
+
+	for (TActorIterator<AStaticMeshActor> It(&World); It; ++It)
+	{
+		UStaticMeshComponent* Ramp = It->GetStaticMeshComponent();
+		if (ArenaLayout::MeshName(Ramp) != TEXT("SM_Ramp"))
+		{
+			continue;
+		}
+
+		// Measure the ramp: which local axis it rises along, how long, wide and high it is.
+		const FBox Local = Ramp->GetStaticMesh()->GetBoundingBox();
+		const FTransform& ToWorld = Ramp->GetComponentTransform();
+		const FVector C = Local.GetCenter();
+		const FVector E = Local.GetExtent();
+		auto TopAt = [&](float LocalX, float LocalY, float& OutZ)
+		{
+			const FVector Point = ToWorld.TransformPosition(FVector(LocalX, LocalY, C.Z));
+			FHitResult Hit;
+			FCollisionQueryParams Params(SCENE_QUERY_STAT(RampTop), true);
+			if (Ramp->LineTraceComponent(Hit, Point + FVector(0.f, 0.f, 2000.f), Point - FVector(0.f, 0.f, 2000.f), Params))
+			{
+				OutZ = Hit.ImpactPoint.Z;
+				return true;
+			}
+			return false;
+		};
+		float XPlus, XMinus, YPlus, YMinus;
+		if (!TopAt(C.X + 0.4f * E.X, C.Y, XPlus) || !TopAt(C.X - 0.4f * E.X, C.Y, XMinus)
+			|| !TopAt(C.X, C.Y + 0.4f * E.Y, YPlus) || !TopAt(C.X, C.Y - 0.4f * E.Y, YMinus))
+		{
+			continue;
+		}
+		const bool bAlongX = FMath::Abs(XPlus - XMinus) >= FMath::Abs(YPlus - YMinus);
+		const float Sign = bAlongX ? FMath::Sign(XPlus - XMinus) : FMath::Sign(YPlus - YMinus);
+		const FVector RunLocal = bAlongX ? FVector(Sign, 0.f, 0.f) : FVector(0.f, Sign, 0.f);
+		const FVector WidthLocal = bAlongX ? FVector(0.f, 1.f, 0.f) : FVector(1.f, 0.f, 0.f);
+
+		float Top = 0.f;
+		TopAt(C.X + RunLocal.X * 0.97f * E.X, C.Y + RunLocal.Y * 0.97f * E.Y, Top);
+		const FVector Scale = ToWorld.GetScale3D().GetAbs();
+		const float RunLength = 2.f * (bAlongX ? E.X * Scale.X : E.Y * Scale.Y);
+		const float Width = 2.f * (bAlongX ? E.Y * Scale.Y : E.X * Scale.X);
+		const float Bottom = FMath::Max(ToWorld.TransformPosition(FVector(C.X, C.Y, Local.Min.Z)).Z, ArenaLayout::FloorTop);
+		const float Rise = Top - Bottom;
+		if (Rise < 20.f || RunLength < 50.f)
+		{
+			continue;
+		}
+
+		FVector Run = ToWorld.TransformVectorNoScale(RunLocal);
+		Run.Z = 0.f;
+		Run.Normalize();
+		FVector Across = ToWorld.TransformVectorNoScale(WidthLocal);
+		Across.Z = 0.f;
+		Across.Normalize();
+		const FVector Center = ToWorld.TransformPosition(C);
+		const FVector LowEnd = FVector(Center.X, Center.Y, 0.f) - Run * (0.5f * RunLength);
+		const FRotator Facing = FRotationMatrix::MakeFromXY(Run, Across).Rotator();
+
+		UMaterialInterface* Stone = Ramp->GetMaterial(0);
+		AActor* StairActor = World.SpawnActor<AActor>(AActor::StaticClass(), FTransform(Facing, LowEnd));
+		if (!StairActor)
+		{
+			continue;
+		}
+		USceneComponent* Root = NewObject<USceneComponent>(StairActor, TEXT("Root"));
+		Root->SetMobility(EComponentMobility::Static);
+		StairActor->SetRootComponent(Root);
+		Root->SetWorldLocationAndRotation(LowEnd, Facing);
+		Root->RegisterComponent();
+
+		// One stone block in stair space: X along the run from the low end, Y across, Z up.
+		auto Block = [&](UStaticMesh* Mesh, const FVector& Min, const FVector& Max, const FRotator& Tilt, bool bSolid)
+		{
+			const FVector Size = Max - Min;
+			const FBox MeshBox = Mesh->GetBoundingBox();
+			UStaticMeshComponent* Piece = NewObject<UStaticMeshComponent>(StairActor);
+			Piece->SetMobility(EComponentMobility::Static);
+			Piece->SetStaticMesh(Mesh);
+			Piece->SetupAttachment(Root);
+			Piece->SetRelativeScale3D(Size / MeshBox.GetSize());
+			Piece->SetRelativeRotation(Tilt);
+			Piece->SetRelativeLocation((Min + Max) * 0.5f - Tilt.RotateVector(MeshBox.GetCenter() * (Size / MeshBox.GetSize())));
+			Piece->SetMaterial(0, Stone);
+			Piece->SetCanEverAffectNavigation(false);
+			if (bSolid)
+			{
+				Piece->SetCollisionProfileName(TEXT("BlockAll"));
+			}
+			else
+			{
+				Piece->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+			Piece->RegisterComponent();
+		};
+		auto Wobble = [&Random](float Degrees) { return FRotator(Random.FRandRange(-Degrees, Degrees), Random.FRandRange(-Degrees, Degrees), Random.FRandRange(-Degrees, Degrees)); };
+
+		// Steps about 24 cm high, each a solid block from below the sand up to its tread, worn and uneven.
+		const int32 StepCount = FMath::Clamp(FMath::RoundToInt(Rise / 24.f), 3, 30);
+		const float Depth = RunLength / StepCount;
+		const float BaseZ = Bottom - 25.f;
+		for (int32 i = 0; i < StepCount; ++i)
+		{
+			const float Tread = Bottom + Rise * (i + 1) / StepCount;
+			const float X0 = i * Depth;
+			const float X1 = (i + 1) * Depth + 4.f; // overlap so there are no gaps between steps
+			const float Half = 0.5f * Width * Random.FRandRange(0.86f, 1.f);
+			const float Shift = Random.FRandRange(-0.04f, 0.04f) * Width;
+
+			if (Random.FRand() < 0.35f && i < StepCount - 1)
+			{
+				// Broken step: split across, one part sunk and skewed, sometimes chipped short.
+				const float Split = Shift + Random.FRandRange(-0.25f, 0.25f) * Width;
+				const bool bLeftBroken = Random.FRand() < 0.5f;
+				const float Sink = Random.FRandRange(4.f, 12.f);
+				const float Chip = Random.FRand() < 0.5f ? Random.FRandRange(0.25f, 0.45f) * Depth : 0.f;
+				Block(Cube, FVector(X0, Shift - Half, BaseZ), FVector(X1 - (bLeftBroken ? Chip : 0.f), Split, Tread - (bLeftBroken ? Sink : 0.f)),
+					bLeftBroken ? Wobble(4.f) : Wobble(1.2f), true);
+				Block(Cube, FVector(X0, Split, BaseZ), FVector(X1 - (bLeftBroken ? 0.f : Chip), Shift + Half, Tread - (bLeftBroken ? 0.f : Sink)),
+					bLeftBroken ? Wobble(1.2f) : Wobble(4.f), true);
+			}
+			else
+			{
+				Block(Cube, FVector(X0, Shift - Half, BaseZ), FVector(X1, Shift + Half, Tread), Wobble(1.2f), true);
+			}
+
+			// Loose chunks lying on some treads.
+			if (Chunk && Random.FRand() < 0.3f)
+			{
+				const float Size = Random.FRandRange(12.f, 30.f);
+				const FVector Spot(Random.FRandRange(X0 + Size, X1 - Size), Random.FRandRange(-0.45f, 0.45f) * Width, Tread + Size * 0.3f);
+				Block(Chunk, Spot - FVector(Size * 0.5f), Spot + FVector(Size * 0.5f), Wobble(30.f), false);
+			}
+		}
+
+		// The stairs replace the ramp.
+		Ramp->SetVisibility(false);
+		Ramp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		++Stairs;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ArenaDressing: replaced %d ramps with stairs"), Stairs);
 }
 
 void UArenaDressingSubsystem::PlantGrass(UWorld& World)
@@ -381,16 +590,29 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 		{ TEXT("M_Dunes"), FLinearColor(0.4f, 0.36f, 0.3f) },
 	};
 
+	UMaterialInterface* ColosseumStone = LoadObject<UMaterialInterface>(nullptr,
+		TEXT("/Game/ThirdPerson/Colosseum/MI_ColosseumSandstone.MI_ColosseumSandstone"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+
 	for (TActorIterator<AActor> It(&World); It; ++It)
 	{
 		TArray<UStaticMeshComponent*> Components;
 		It->GetComponents(Components);
 		for (UStaticMeshComponent* Component : Components)
 		{
+			if (Component->ComponentHasTag(ArenaLayout::SandFloorTag))
+			{
+				continue; // the arena sand keeps its own clean look
+			}
 			for (int32 Slot = 0; Slot < Component->GetNumMaterials(); ++Slot)
 			{
 				UMaterialInterface* Material = Component->GetMaterial(Slot);
 				const UMaterial* Base = Material ? Material->GetBaseMaterial() : nullptr;
+				// One stone for everything: columns and rubble (limestone) switch to the colosseum's stone.
+				if (Base && Base->GetName() == TEXT("M_RomanColumn") && ColosseumStone)
+				{
+					Material = ColosseumStone;
+					Base = ColosseumStone->GetBaseMaterial();
+				}
 				const FLook* Look = nullptr;
 				for (const FLook& Candidate : Looks)
 				{
