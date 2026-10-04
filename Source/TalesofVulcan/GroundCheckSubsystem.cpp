@@ -1,6 +1,9 @@
 #include "GroundCheckSubsystem.h"
+#include "DodgeComponent.h"
 #include "FireFX.h"
+#include "HealthComponent.h"
 #include "HipRootMotionComponent.h"
+#include "PlungeAttackComponent.h"
 #include "LockOnComponent.h"
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
@@ -236,11 +239,25 @@ void UGroundCheckSubsystem::StartLockShot()
 		ULockOnComponent* LockOn = Player->FindComponentByClass<ULockOnComponent>();
 		UE_LOG(LogTemp, Warning, TEXT("[LockShot] lock-on component %s, locked: %d"), LockOn ? TEXT("found") : TEXT("missing"), LockOn && LockOn->ToggleLock() ? 1 : 0);
 	});
-	for (int32 i = 0; i < 12; ++i)
+	// Roll, jump and plunge (dust), hit Vulcan (boss bar trail), then kill him (victory banner).
+	if (UHealthComponent* PlayerHealth = Player->FindComponentByClass<UHealthComponent>())
+	{
+		PlayerHealth->bInvulnerable = true;
+	}
+	After(8.f, [Player]() { if (UDodgeComponent* Dodge = Player->FindComponentByClass<UDodgeComponent>()) { Dodge->TryDodge(); } });
+	After(9.5f, [Player]() { Player->Jump(); });
+	After(9.8f, [Player]() { if (UPlungeAttackComponent* Plunge = Player->FindComponentByClass<UPlungeAttackComponent>()) { Plunge->TryPlunge(); } });
+	auto Hit = [World, Player, Boss](float Amount)
+	{
+		UGameplayStatics::ApplyDamage(Boss, Amount, UGameplayStatics::GetPlayerController(World, 0), Player, UDamageType::StaticClass());
+	};
+	After(11.f, [Hit]() { Hit(150.f); });
+	After(13.f, [Hit]() { Hit(100000.f); });
+	for (int32 i = 0; i < 26; ++i)
 	{
 		After(6.4f + i * 0.5f, [this, i]() { Shot(FString::Printf(TEXT("lock_%02d"), i)); });
 	}
-	After(13.f, []() { FPlatformMisc::RequestExit(false); });
+	After(19.5f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartFireShot()
@@ -282,7 +299,18 @@ void UGroundCheckSubsystem::StartFireShot()
 		AFireFX::Spawn(World, Spot + FVector(400.f, 0.f, 0.f), AFireFX::GroundFirePreset(300.f, 3.f));
 	});
 	After(4.6f, [this]() { Shot(TEXT("fire_embers_ground")); });
-	After(5.2f, []() { FPlatformMisc::RequestExit(false); });
+
+	// Dust once the fire is out: plunge slam (left) and a footstep puff (right), seen from above the player.
+	After(6.8f, [this, World, Feet, Spot, Forward, Side]()
+	{
+		AFireFX::Spawn(World, Spot - Side * 250.f, AFireFX::DustPreset(200.f, 40));
+		AFireFX::Spawn(World, Spot + Side * 250.f, AFireFX::DustPreset(50.f, 5));
+		ShootFrom(Feet - Forward * 200.f + FVector(0.f, 0.f, 300.f), Spot + FVector(0.f, 0.f, 60.f));
+	});
+	After(7.0f, [this]() { Shot(TEXT("dust_a")); });
+	After(7.4f, [this]() { Shot(TEXT("dust_b")); });
+	After(7.9f, [this]() { Shot(TEXT("dust_c")); });
+	After(8.4f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)

@@ -243,9 +243,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
 	bool bStartFightOnBeginPlay = true;
 
-	/** Draws hitboxes, cones and warning circles while testing. Turn off for the demo. */
+	/** Draws hitboxes, cones and warning circles while testing. Turn on while tuning. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
-	bool bShowDebug = true;
+	bool bShowDebug = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
 	float AggroRange = 4000.f;

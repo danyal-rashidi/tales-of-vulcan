@@ -32,7 +32,7 @@ public:
 
 	/** Prints "<Name> took X damage" on screen. Handy until there's a health bar. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Health")
-	bool bPrintDamageToScreen = true;
+	bool bPrintDamageToScreen = false;
 
 	UPROPERTY(BlueprintAssignable, Category="Health")
 	FOnHealthChanged OnHealthChanged;

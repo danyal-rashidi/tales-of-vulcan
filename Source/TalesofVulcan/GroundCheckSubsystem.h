@@ -15,7 +15,8 @@
  * -EnvShot      films the arena (overview, ground level, grass close-up, wall) for checking fog/grass/floor.
  * -FireShot     spawns each FireFX preset next to the player and films it.
  * -BossShot     starts the fight and films Vulcan (wake-up roar, attacks, flinches from a few hits, death).
- * -LockShot     starts the fight, locks on to Vulcan and films from the player camera.
+ * -LockShot     starts the fight, locks on to Vulcan and films from the player camera with UI: a roll,
+ *               a jump and plunge (dust), a hit (boss bar), then Vulcan's death (victory banner).
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
