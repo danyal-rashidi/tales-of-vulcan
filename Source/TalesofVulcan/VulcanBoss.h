@@ -261,7 +261,7 @@ public:
 	float BreathDuration = 2.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Molten Breath")
-	float BreathRange = 600.f;
+	float BreathRange = 420.f;
 
 	/** Half the cone width (15 = 30 degree cone). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Molten Breath")
@@ -278,7 +278,7 @@ public:
 	float BreathTurnRate = 45.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Molten Breath")
-	float PhaseTwoBreathExtraRange = 200.f;
+	float PhaseTwoBreathExtraRange = 140.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Molten Breath")
 	float PhaseTwoBreathExtraHalfAngle = 10.f;
