@@ -1,4 +1,5 @@
 #include "PlungeAttackComponent.h"
+#include "SlamCameraShake.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
 #include "DodgeComponent.h"
@@ -21,6 +22,7 @@
 UPlungeAttackComponent::UPlungeAttackComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	LandingCameraShake = USlamCameraShake::StaticClass();
 }
 
 void UPlungeAttackComponent::BeginPlay()

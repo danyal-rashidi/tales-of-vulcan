@@ -93,9 +93,38 @@ bool UMeleeAttackComponent::TryAttack()
 		Character->PlayAnimMontage(AttackMontage);
 	}
 
+	GatherHitTimes();
+	NextHit = 0;
 	OnAttackStarted.Broadcast();
-	World->GetTimerManager().SetTimer(AttackTimer, this, &UMeleeAttackComponent::DoHit, FMath::Max(HitDelay, 0.01f), false);
+
+	FTimerManager& Timers = World->GetTimerManager();
+	Timers.SetTimer(AttackTimer, this, &UMeleeAttackComponent::DoHit, HitTimes[0], false);
+	Timers.SetTimer(EndTimer, this, &UMeleeAttackComponent::EndAttack, FMath::Max(AttackDuration, HitTimes.Last() + 0.01f), false);
 	return true;
+}
+
+void UMeleeAttackComponent::GatherHitTimes()
+{
+	HitTimes.Reset();
+
+	// One hit per notify placed on a strike frame, so the damage matches the animation at any Rate Scale.
+	if (AttackMontage && !HitNotifyName.IsNone())
+	{
+		const float Rate = FMath::Max(AttackMontage->RateScale, 0.01f);
+		for (const FAnimNotifyEvent& Notify : AttackMontage->Notifies)
+		{
+			if (Notify.NotifyName == HitNotifyName)
+			{
+				HitTimes.Add(FMath::Max(Notify.GetTriggerTime() / Rate, 0.01f));
+			}
+		}
+		HitTimes.Sort();
+	}
+
+	if (HitTimes.IsEmpty())
+	{
+		HitTimes.Add(FMath::Max(HitDelay, 0.01f));
+	}
 }
 
 void UMeleeAttackComponent::DoHit()
@@ -104,7 +133,6 @@ void UMeleeAttackComponent::DoHit()
 	UWorld* World = GetWorld();
 	if (!Character || !World)
 	{
-		EndAttack();
 		return;
 	}
 
@@ -142,11 +170,21 @@ void UMeleeAttackComponent::DoHit()
 		DrawDebugSphere(World, Center, HitRadius, 16, AlreadyHit.Num() > 0 ? FColor::Green : FColor::Red, false, 0.4f);
 	}
 
-	World->GetTimerManager().SetTimer(AttackTimer, this, &UMeleeAttackComponent::EndAttack, FMath::Max(AttackDuration - HitDelay, 0.01f), false);
+	// Line up the next swing if the montage has more than one Hit notify.
+	++NextHit;
+	if (HitTimes.IsValidIndex(NextHit))
+	{
+		World->GetTimerManager().SetTimer(AttackTimer, this, &UMeleeAttackComponent::DoHit, FMath::Max(HitTimes[NextHit] - HitTimes[NextHit - 1], 0.01f), false);
+	}
 }
 
 void UMeleeAttackComponent::EndAttack()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AttackTimer);
+	}
+
 	if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
 	{
 		if (UCharacterMovementComponent* Move = Character->GetCharacterMovement())

@@ -73,7 +73,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Plunge")
 	FName SlamSection = TEXT("Slam");
 
-	/** Optional camera shake played on the player's camera at impact. */
+	/** Camera shake played on the player's camera at impact. Defaults to SlamCameraShake; clear it for no shake. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Plunge")
 	TSubclassOf<UCameraShakeBase> LandingCameraShake;
 
