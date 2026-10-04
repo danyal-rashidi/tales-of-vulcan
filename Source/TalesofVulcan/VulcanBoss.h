@@ -79,6 +79,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
 	bool bShowGlasses = true;
 
+	/** Obsidian spikes on the back, head and tail. Off: a smooth, round otter. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bShowSpikes = false;
+
 	/** Size of the head and everything on it (face, glasses, ears, head spikes). 1 = original. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0.25", ClampMax="4"))
 	float HeadScale = 2.f;

@@ -732,7 +732,7 @@ void AVulcanBoss::ApplyOtterLook()
 			continue;
 		}
 
-		Part->SetVisibility(bShowOtter && (bShowGlasses || !OtterBody::IsGlasses(i)));
+		Part->SetVisibility(bShowOtter && (bShowGlasses || !OtterBody::IsGlasses(i)) && (bShowSpikes || !OtterBody::IsSpike(i)));
 		Part->SetMaterial(0, OtterMaterials[OtterBody::Colors[i]]);
 	}
 
