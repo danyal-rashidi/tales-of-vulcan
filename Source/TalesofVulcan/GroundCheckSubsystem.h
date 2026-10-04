@@ -12,6 +12,8 @@
  *               attack montages, films the player from the side (-ShotYaw=90 -ShotDist=260) during idle,
  *               light and heavy attack into Saved/SpearShots, then quits. Grip overrides for testing:
  *               -GripFront=0.4 -GripRoll=0 -GripFlip -GripSwapHands
+ * -EnvShot      films the arena (overview, ground level, grass close-up, wall) for checking fog/grass/floor.
+ * -FireShot     spawns each FireFX preset next to the player and films it.
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
@@ -25,9 +27,15 @@ public:
 private:
 	void Report();
 	void StartSpearShot();
+	void StartEnvShot();
+	void StartFireShot();
 	void Shot(const FString& Name);
+	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);
 
 	FTimerHandle ReportTimer;
 	TArray<FTimerHandle> ShotTimers;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class ACameraActor> ShotCamera;
 };

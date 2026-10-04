@@ -21,6 +21,7 @@
 #include "GameFramework/DamageType.h"
 #include "DriftParticles.h"
 #include "EarthquakeCameraShake.h"
+#include "FireFX.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -1246,6 +1247,17 @@ void AVulcanBoss::BeginBreathing()
 {
 	BreathTimeRemaining = BreathDuration + (bPhaseTwo ? PhaseTwoBreathExtraDuration : 0.f);
 	OnBreathStarted();
+
+	// Visible flames from the mouth along Vulcan's facing (the damage cone in BreathTick is unchanged).
+	USceneComponent* Mouth = GetMesh();
+	if (OtterParts.IsValidIndex(OtterBody::Muzzle) && OtterParts[OtterBody::Muzzle])
+	{
+		Mouth = OtterParts[OtterBody::Muzzle];
+	}
+	AFireFX::Spawn(GetWorld(), Mouth->GetComponentLocation(),
+		AFireFX::BreathPreset(BreathRange + (bPhaseTwo ? PhaseTwoBreathExtraRange : 0.f),
+			BreathHalfAngle + (bPhaseTwo ? PhaseTwoBreathExtraHalfAngle : 0.f), BreathTimeRemaining),
+		Mouth);
 	GetWorldTimerManager().SetTimer(BreathTimer, this, &AVulcanBoss::BreathTick, FMath::Max(BreathTickInterval, 0.02f), true);
 }
 
@@ -1300,12 +1312,14 @@ void AVulcanBoss::EndBreath()
 void AVulcanBoss::StartDive()
 {
 	PlayMontageScaled(DiveMontage);
+	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(180.f, 70));
 	Schedule(AttackTimer, &AVulcanBoss::DiveSubmerge, DiveSubmergeTime / GetSpeedScale());
 }
 
 void AVulcanBoss::DiveSubmerge()
 {
 	OnDiveSubmerged(GetFeetLocation());
+	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(260.f, 110));
 
 	// Disable movement before collision, otherwise Vulcan falls through the floor.
 	GetCharacterMovement()->DisableMovement();
@@ -1328,6 +1342,7 @@ void AVulcanBoss::DiveShowWarning()
 	OnDiveWarning(Ground, DiveRadius);
 
 	const float WarningTime = DiveWarningTime / GetSpeedScale();
+	AFireFX::Spawn(GetWorld(), Ground, AFireFX::EmbersPreset(DiveRadius, WarningTime));
 	if (bShowDebug)
 	{
 		DrawDebugCircle(GetWorld(), Ground + FVector(0.f, 0.f, 5.f), DiveRadius, 32, FColor::Orange, false, WarningTime, 0, 4.f, FVector(1.f, 0.f, 0.f), FVector(0.f, 1.f, 0.f), false);
@@ -1347,6 +1362,7 @@ void AVulcanBoss::DiveEmerge()
 
 	const FVector Ground = GetFeetLocation();
 	OnDiveEmerged(Ground);
+	AFireFX::Spawn(GetWorld(), Ground, AFireFX::BurstPreset(DiveRadius, 160));
 
 	if (APawn* Player = GetPlayer())
 	{
@@ -1361,6 +1377,7 @@ void AVulcanBoss::DiveEmerge()
 		BurnPatchLocation = Ground;
 		BurnPatchTimeRemaining = BurnPatchDuration;
 		OnBurnPatchStarted(Ground, DiveRadius, BurnPatchDuration);
+		AFireFX::Spawn(GetWorld(), Ground, AFireFX::GroundFirePreset(DiveRadius, BurnPatchDuration));
 		GetWorldTimerManager().SetTimer(BurnTimer, this, &AVulcanBoss::BurnPatchTick, 0.5f, true);
 	}
 

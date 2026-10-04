@@ -1,4 +1,5 @@
 #include "GroundCheckSubsystem.h"
+#include "FireFX.h"
 #include "HipRootMotionComponent.h"
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
@@ -22,7 +23,8 @@
 bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
 	const TCHAR* CommandLine = FCommandLine::Get();
-	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot")))
+	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
+		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -35,14 +37,100 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		return;
 	}
 
-	if (FParse::Param(FCommandLine::Get(), TEXT("GroundCheck")))
+	const TCHAR* CommandLine = FCommandLine::Get();
+	FTimerManager& Timers = InWorld.GetTimerManager();
+	if (FParse::Param(CommandLine, TEXT("GroundCheck")))
 	{
-		InWorld.GetTimerManager().SetTimer(ReportTimer, this, &UGroundCheckSubsystem::Report, 4.f, false);
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::Report, 4.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("EnvShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartEnvShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("FireShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartFireShot, 3.f, false);
 	}
 	else
 	{
-		InWorld.GetTimerManager().SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartSpearShot, 3.f, false);
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartSpearShot, 3.f, false);
 	}
+}
+
+void UGroundCheckSubsystem::ShootFrom(const FVector& Location, const FVector& LookAt)
+{
+	UWorld* World = GetWorld();
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
+	if (!Controller)
+	{
+		return;
+	}
+	if (!ShotCamera)
+	{
+		ShotCamera = World->SpawnActor<ACameraActor>(Location, (LookAt - Location).Rotation());
+	}
+	ShotCamera->SetActorLocationAndRotation(Location, (LookAt - Location).Rotation());
+	Controller->SetViewTarget(ShotCamera);
+}
+
+void UGroundCheckSubsystem::StartEnvShot()
+{
+	// Arena centre (see ArenaDressingSubsystem).
+	const FVector Center(-44.f, -5.f, 0.f);
+
+	After(0.2f, [this]() { Shot(TEXT("env_player")); });
+	After(0.4f, [this, Center]() { ShootFrom(Center + FVector(0.f, -2600.f, 1400.f), Center); });
+	After(0.8f, [this]() { Shot(TEXT("env_overview")); });
+	After(1.0f, [this, Center]() { ShootFrom(Center + FVector(2300.f, 900.f, 120.f), Center + FVector(-2500.f, -900.f, 40.f)); });
+	After(1.4f, [this]() { Shot(TEXT("env_ground")); });
+	After(2.4f, [this]() { Shot(TEXT("env_ground_later")); });
+	After(2.6f, [this, Center]() { ShootFrom(Center + FVector(2600.f, -1300.f, 70.f), Center + FVector(3000.f, -1700.f, 30.f)); });
+	After(3.0f, [this]() { Shot(TEXT("env_grass_close")); });
+	After(3.2f, [this, Center]() { ShootFrom(Center + FVector(-500.f, 0.f, 250.f), Center + FVector(3300.f, 0.f, 300.f)); });
+	After(3.6f, [this]() { Shot(TEXT("env_wall")); });
+	After(4.0f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartFireShot()
+{
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	if (!Player)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+
+	const FVector Feet = Player->GetActorLocation() - FVector(0.f, 0.f, Player->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	const FVector Forward = Player->GetActorForwardVector();
+	const FVector Side = Player->GetActorRightVector();
+
+	// Breath from the player's position along its facing, filmed from the side.
+	After(0.1f, [this, World, Player, Feet, Forward, Side]()
+	{
+		AFireFX::Spawn(World, Player->GetActorLocation() + FVector(0.f, 0.f, 60.f), AFireFX::BreathPreset(600.f, 15.f, 2.f), Player->GetRootComponent());
+		ShootFrom(Feet + Forward * 300.f + Side * 650.f + FVector(0.f, 0.f, 180.f), Feet + Forward * 300.f + FVector(0.f, 0.f, 60.f));
+	});
+	After(0.7f, [this]() { Shot(TEXT("fire_breath_a")); });
+	After(1.3f, [this]() { Shot(TEXT("fire_breath_b")); });
+
+	// Dive take-off burst, landing burst, then warning embers and a burning patch.
+	const FVector Spot = Feet + Forward * 500.f;
+	After(2.4f, [this, World, Spot, Side]()
+	{
+		AFireFX::Spawn(World, Spot, AFireFX::BurstPreset(300.f, 160));
+		ShootFrom(Spot + Side * 900.f + FVector(0.f, 0.f, 250.f), Spot + FVector(0.f, 0.f, 80.f));
+	});
+	After(2.55f, [this]() { Shot(TEXT("fire_burst_a")); });
+	After(2.8f, [this]() { Shot(TEXT("fire_burst_b")); });
+	After(3.2f, [this]() { Shot(TEXT("fire_burst_c")); });
+	After(3.6f, [World, Spot]()
+	{
+		AFireFX::Spawn(World, Spot + FVector(-400.f, 0.f, 0.f), AFireFX::EmbersPreset(300.f, 3.f));
+		AFireFX::Spawn(World, Spot + FVector(400.f, 0.f, 0.f), AFireFX::GroundFirePreset(300.f, 3.f));
+	});
+	After(4.6f, [this]() { Shot(TEXT("fire_embers_ground")); });
+	After(5.2f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)
