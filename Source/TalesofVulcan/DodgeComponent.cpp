@@ -1,4 +1,5 @@
 #include "DodgeComponent.h"
+#include "GameAudio.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
 #include "PlungeAttackComponent.h"
@@ -86,6 +87,8 @@ bool UDodgeComponent::TryDodge()
 	}
 
 	World->GetTimerManager().SetTimer(DodgeTimer, this, &UDodgeComponent::EndDodge, FMath::Max(DodgeDuration, 0.01f), false);
+	GameAudio::Play(this, TEXT("Roll"), Character->GetActorLocation(), 1.5f);
+	GameAudio::Play(this, TEXT("Thud"), Character->GetActorLocation(), 0.25f, 1.2f);
 	OnDodgeStarted.Broadcast();
 	return true;
 }

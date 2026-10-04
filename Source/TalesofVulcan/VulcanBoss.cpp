@@ -1,4 +1,5 @@
 #include "VulcanBoss.h"
+#include "GameAudio.h"
 #include "HealthComponent.h"
 #include "VulcanProjectile.h"
 #include "AIController.h"
@@ -48,6 +49,12 @@ namespace OtterBody
 		SpikeBack0, SpikeBack1, SpikeBack2, SpikeBack3,
 		SpikeHead0, SpikeHead1, SpikeHead2,
 		SpikeTail0, SpikeTail1,
+		// Lava mouth tucked inside the muzzle: where the breath flames come out
+		Mouth,
+		// Awakened form only: pear-shaped hips, chubby cheeks, snout mound under the nose,
+		// the cream patches sweeping up the sides of the face, and the cream belly around the lava core
+		Hips, CheekL, CheekR, Snout,
+		FaceSideL, FaceSideR, BellyCream,
 		Count
 	};
 
@@ -69,7 +76,10 @@ namespace OtterBody
 		TEXT("Tail0"), TEXT("Tail1"), TEXT("Tail2"),
 		TEXT("SpikeBack0"), TEXT("SpikeBack1"), TEXT("SpikeBack2"), TEXT("SpikeBack3"),
 		TEXT("SpikeHead0"), TEXT("SpikeHead1"), TEXT("SpikeHead2"),
-		TEXT("SpikeTail0"), TEXT("SpikeTail1")
+		TEXT("SpikeTail0"), TEXT("SpikeTail1"),
+		TEXT("Mouth"),
+		TEXT("Hips"), TEXT("CheekL"), TEXT("CheekR"), TEXT("Snout"),
+		TEXT("FaceSideL"), TEXT("FaceSideR"), TEXT("BellyCream")
 	};
 
 	const EColorSlot Colors[Count] =
@@ -86,13 +96,72 @@ namespace OtterBody
 		Fur, Fur, Fur,
 		Obsidian, Obsidian, Obsidian, Obsidian,
 		Obsidian, Obsidian, Obsidian,
-		Obsidian, Obsidian
+		Obsidian, Obsidian,
+		Lava,
+		Fur, MuzzleTone, MuzzleTone, MuzzleTone,
+		MuzzleTone, MuzzleTone, MuzzleTone
 	};
 
-	bool IsSpike(int32 Part) { return Part >= SpikeBack0 && Part < Count; }
+	bool IsSpike(int32 Part) { return Part >= SpikeBack0 && Part <= SpikeTail1; }
 	bool IsGlasses(int32 Part) { return Part >= RimL0 && Part <= Bridge; }
+	bool IsAwakenedOnly(int32 Part) { return Part >= Hips && Part <= BellyCream; }
 
 	constexpr int32 RimBeads = 10;
+
+	// Engine sphere is 100 units across, so scale = size / 100. Sizes are in cm before boss scaling (S).
+	void PlaceBlob(UStaticMeshComponent* Part, const FVector& Center, const FMatrix& Axes, const FVector& SizeCm, float S)
+	{
+		Part->SetWorldTransform(FTransform(Axes.Rotator(), Center, SizeCm * S / 100.f));
+	}
+
+	// Stretched sphere running from A to B, like a sausage.
+	void PlaceLimb(UStaticMeshComponent* Part, const FVector& A, const FVector& B, float RadiusCm, float S, const FVector& Fwd)
+	{
+		const FVector Up = FVector::UpVector;
+		const FVector Dir = B - A;
+		const float Length = Dir.Size();
+		const FVector Along = Length > KINDA_SMALL_NUMBER ? Dir / Length : Up;
+		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
+		const float Diameter = RadiusCm * 2.f * S;
+		const FVector Scale = FVector(Diameter, Diameter, Length + Diameter * 0.8f) / 100.f;
+		Part->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), (A + B) * 0.5f, Scale));
+	}
+
+	// Cone with its tip pointing along Direction. Engine cone is 100 tall and 100 wide, pivot at its center.
+	void PlaceSpike(UStaticMeshComponent* Part, const FVector& Base, const FVector& Direction, float LengthCm, float WidthCm, float S, const FVector& Fwd)
+	{
+		const FVector Up = FVector::UpVector;
+		const FVector Along = Direction.GetSafeNormal();
+		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
+		const FVector Center = Base + Along * LengthCm * 0.5f * S;
+		Part->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), Center, FVector(WidthCm, WidthCm, LengthCm) * S / 100.f));
+	}
+
+	/** Unit direction from an azimuth (toward +Y) and elevation (toward +Z), in degrees. */
+	FVector AzEl(float AzimuthDeg, float ElevationDeg)
+	{
+		const float Az = FMath::DegreesToRadians(AzimuthDeg);
+		const float El = FMath::DegreesToRadians(ElevationDeg);
+		return FVector(FMath::Cos(El) * FMath::Cos(Az), FMath::Cos(El) * FMath::Sin(Az), FMath::Sin(El));
+	}
+
+	/**
+	 * A copy of the ellipsoid (Center, Axes, SizeCm), shrunk and nudged along Direction (in the ellipsoid's own
+	 * X/Y/Z, as on a unit sphere), that pokes out of it only where (surface point . Direction) > Line, by at most
+	 * Bulge (a fraction of the radius). Used for the awakened otter's color patches so they sit flush with the
+	 * surface and have smooth curved edges instead of floating on top.
+	 */
+	void ShellOf(const FVector& Center, const FMatrix& Axes, const FVector& SizeCm, const FVector& Direction,
+		float Line, float Bulge, float S, FVector& OutCenter, FVector& OutSizeCm)
+	{
+		const float Shift = (2.f * Bulge + Bulge * Bulge) / (2.f * (1.f + Bulge - Line));
+		const FVector Dir = Direction.GetSafeNormal();
+		const FVector Radii = SizeCm * 0.5f;
+		OutCenter = Center + (Axes.GetScaledAxis(EAxis::X) * Radii.X * Dir.X
+			+ Axes.GetScaledAxis(EAxis::Y) * Radii.Y * Dir.Y
+			+ Axes.GetScaledAxis(EAxis::Z) * Radii.Z * Dir.Z) * Shift * S;
+		OutSizeCm = SizeCm * (1.f + Bulge - Shift);
+	}
 }
 
 AVulcanBoss::AVulcanBoss()
@@ -179,6 +248,14 @@ AVulcanBoss::AVulcanBoss()
 
 void AVulcanBoss::BeginPlay()
 {
+	// Every fight starts in the original form (the editor preview may have left the awakened one showing).
+	// Done before Super, which runs the Blueprint's Event BeginPlay: a Start Fight called there, or from an
+	// actor that began play earlier, has already switched forms and must keep it.
+	if (!bFightActive)
+	{
+		bAwakenedShown = false;
+	}
+
 	Super::BeginPlay();
 
 	BuildMontagesFromAnimations();
@@ -207,20 +284,42 @@ void AVulcanBoss::BeginPlay()
 		ApplyOtterLook();
 		GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FreezeStatuePose, 0.2f, false);
 	}
-	else if (bStartFightOnBeginPlay)
+	else
 	{
-		StartFight();
+		ApplyOtterLook();
+		if (bStartFightOnBeginPlay)
+		{
+			StartFight();
+		}
 	}
 
 	GetWorldTimerManager().SetTimer(ThinkTimer, this, &AVulcanBoss::Think, FMath::Max(ThinkInterval, 0.05f), true);
+}
+
+void AVulcanBoss::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// The sun's actor isn't Vulcan's, so take it with him if he's removed. (When the level itself ends,
+	// it goes with everything else.)
+	const bool bRemoved = EndPlayReason == EEndPlayReason::Destroyed || EndPlayReason == EEndPlayReason::RemovedFromWorld;
+	if (bRemoved && IsValid(BloodSunHolder))
+	{
+		BloodSunHolder->Destroy();
+		BloodSunHolder = nullptr;
+		BloodSunDisk = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void AVulcanBoss::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
-	// Show the statue look in the editor too, so the sculpture model can be lined up.
-	IntroState = bStatueIntro ? EIntroState::Statue : EIntroState::Done;
+	// Show the statue look in the editor too, so the sculpture model can be lined up
+	// (or the awakened form, to check how it looks).
+	const bool bPreviewAwakened = bPreviewAwakenedForm && bAwakenedForm && bUseOtterBody;
+	IntroState = bStatueIntro && !bPreviewAwakened ? EIntroState::Statue : EIntroState::Done;
+	bAwakenedShown = bPreviewAwakened;
 
 	RebindOtterParts();
 	ApplyOtterLook();
@@ -294,6 +393,7 @@ void AVulcanBoss::StrikeStatue()
 	const FVector Target = GetActorLocation() + FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.8f);
 	BuildBolt(Target);
 	OnStatueStruck(Target);
+	GameAudio::Play2D(this, TEXT("Thunder"), 1.4f);
 	SetQuakeStrength(1.6f); // thunder jolt
 
 	const float StrikeTime = FMath::Max(LightningStrikeTime, 0.05f);
@@ -306,6 +406,11 @@ void AVulcanBoss::BeginShaking()
 {
 	IntroState = EIntroState::Awakening;
 	OnStatueAwakening();
+
+	// A deep rumble (thunder slowed down) and the statue's stone cracking.
+	GameAudio::Play2D(this, TEXT("Thunder"), 1.1f, 0.4f);
+	GameAudio::Play(this, TEXT("Crack"), GetActorLocation(), 1.f, 0.6f, 6000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetActorLocation(), 2.f, 0.8f, 6000.f);
 
 	if (bShowDebug && GEngine)
 	{
@@ -613,17 +718,28 @@ void AVulcanBoss::UpdateBloodSun()
 		{
 			return;
 		}
+		// The disk lives on its own actor: components of a hidden actor don't render, and Vulcan
+		// hides himself during Magma Dive, which would take the sun out of the sky with him.
+		FActorSpawnParameters Params;
+		Params.Owner = this;
+		Params.ObjectFlags |= RF_Transient;
+		BloodSunHolder = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), Camera->GetCameraLocation(), FRotator::ZeroRotator, Params);
+		if (!BloodSunHolder)
+		{
+			return;
+		}
+
 		BloodSunMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 		BloodSunMaterial->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 		BloodSunMaterial->SetScalarParameterValue(TEXT("Roughness"), 1.f);
 
-		BloodSunDisk = NewObject<UStaticMeshComponent>(this);
+		BloodSunDisk = NewObject<UStaticMeshComponent>(BloodSunHolder);
 		BloodSunDisk->SetStaticMesh(Sphere);
 		BloodSunDisk->SetMaterial(0, BloodSunMaterial);
 		BloodSunDisk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		BloodSunDisk->SetCastShadow(false);
 		BloodSunDisk->SetCanEverAffectNavigation(false);
-		BloodSunDisk->SetAbsolute(true, true, true);
+		BloodSunHolder->SetRootComponent(BloodSunDisk);
 		BloodSunDisk->RegisterComponent();
 	}
 
@@ -653,6 +769,11 @@ void AVulcanBoss::FinishAwakening()
 	ApplyOtterLook();
 	OnStatueTransformed();
 
+	// Creature sounds pitched down a lot for Vulcan's size, two layered for the wake-up roar.
+	GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.2f, 0.6f, 9000.f);
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 0.9f, 0.5f, 9000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetActorLocation(), 2.f, 0.7f, 6000.f);
+
 	StartFight();
 	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.f; // a beat to react before the first attack
 
@@ -677,6 +798,7 @@ void AVulcanBoss::ApplyOtterLook()
 	const bool bStatue = IntroState != EIntroState::Done;
 	const bool bStatueModel = bStatue && HasStatueModel();
 	const bool bShowOtter = bUseOtterBody && !bStatueModel;
+	const bool bAwakenedLook = bAwakenedShown && !bStatue;
 
 	StatueMesh->SetVisibility(bStatueModel);
 	GetMesh()->SetVisibility(!bUseOtterBody && !bStatueModel, false);
@@ -732,7 +854,11 @@ void AVulcanBoss::ApplyOtterLook()
 			continue;
 		}
 
-		Part->SetVisibility(bShowOtter && (bShowGlasses || !OtterBody::IsGlasses(i)));
+		// Spikes only on the awakened otter, which has no glasses; the original has no hips, cheeks or snout.
+		const bool bInForm = bAwakenedLook
+			? !OtterBody::IsGlasses(i)
+			: !OtterBody::IsAwakenedOnly(i) && !OtterBody::IsSpike(i);
+		Part->SetVisibility(bShowOtter && bInForm && (bShowGlasses || !OtterBody::IsGlasses(i)));
 		Part->SetMaterial(0, OtterMaterials[OtterBody::Colors[i]]);
 	}
 
@@ -764,31 +890,25 @@ void AVulcanBoss::UpdateOtterBody()
 
 	auto Bone = [Body](const TCHAR* Name) { return Body->GetSocketLocation(FName(Name)); };
 
-	// Engine sphere is 100 units across, so scale = size / 100. Sizes are in cm before boss scaling.
+	if (bAwakenedShown && IntroState == EIntroState::Done)
+	{
+		LayoutAwakenedOtter(S, Fwd, Right);
+		return;
+	}
+
 	auto Blob = [this, S](int32 Part, const FVector& Center, const FMatrix& Axes, const FVector& SizeCm)
 	{
-		OtterParts[Part]->SetWorldTransform(FTransform(Axes.Rotator(), Center, SizeCm * S / 100.f));
+		PlaceBlob(OtterParts[Part], Center, Axes, SizeCm, S);
 	};
 
-	// Stretched sphere running from A to B, like a sausage.
-	auto Limb = [this, S, Fwd, Up](int32 Part, const FVector& A, const FVector& B, float RadiusCm)
+	auto Limb = [this, S, Fwd](int32 Part, const FVector& A, const FVector& B, float RadiusCm)
 	{
-		const FVector Dir = B - A;
-		const float Length = Dir.Size();
-		const FVector Along = Length > KINDA_SMALL_NUMBER ? Dir / Length : Up;
-		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
-		const float Diameter = RadiusCm * 2.f * S;
-		const FVector Scale = FVector(Diameter, Diameter, Length + Diameter * 0.8f) / 100.f;
-		OtterParts[Part]->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), (A + B) * 0.5f, Scale));
+		PlaceLimb(OtterParts[Part], A, B, RadiusCm, S, Fwd);
 	};
 
-	// Cone with its tip pointing along Direction. Engine cone is 100 tall and 100 wide, pivot at its center.
-	auto Spike = [this, S, Fwd, Up](int32 Part, const FVector& Base, const FVector& Direction, float LengthCm, float WidthCm)
+	auto Spike = [this, S, Fwd](int32 Part, const FVector& Base, const FVector& Direction, float LengthCm, float WidthCm)
 	{
-		const FVector Along = Direction.GetSafeNormal();
-		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
-		const FVector Center = Base + Along * LengthCm * 0.5f * S;
-		OtterParts[Part]->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), Center, FVector(WidthCm, WidthCm, LengthCm) * S / 100.f));
+		PlaceSpike(OtterParts[Part], Base, Direction, LengthCm, WidthCm, S, Fwd);
 	};
 
 	// ---- Torso: pear-shaped, molten lava belly in front
@@ -846,6 +966,7 @@ void AVulcanBoss::UpdateOtterBody()
 	HeadBlob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
 	// Muzzle: a wide cream bulge over the lower face and cheeks, like the reference.
 	HeadBlob(Muzzle, OnFace(0.f, -12.f, -14.f), HeadAxes, FVector(32.f, 54.f, 30.f));
+	HeadBlob(Mouth, OnFace(0.f, -15.f, -5.f), HeadAxes, FVector(3.f, 4.f, 2.f)); // hidden inside the muzzle
 	HeadBlob(Nose, OnFace(0.f, -4.f, 2.f), HeadAxes, FVector(6.f, 9.f, 6.f));
 	HeadBlob(Bridge, OnFace(0.f, 4.f, 0.9f), HeadAxes, FVector(1.6f, 6.f, 1.6f));
 
@@ -971,13 +1092,231 @@ void AVulcanBoss::UpdateOtterBody()
 	Spike(SpikeTail0, FMath::Lerp(TailRoot, T1, 0.6f) + Up * 9.f * S, TailLean, 14.f, 10.f);
 	Spike(SpikeTail1, FMath::Lerp(T1, T2, 0.5f) + Up * 7.f * S, TailLean, 11.f, 8.f);
 
-	// ---- Lava glow, flickering, out in front so it lights the floor rather than blowing out the body.
+	PlaceCoreGlow(Pelvis, Spine, Fwd, S);
+}
+
+void AVulcanBoss::PlaceCoreGlow(const FVector& Pelvis, const FVector& Spine, const FVector& Fwd, float S)
+{
+	// Lava glow, flickering, out in front so it lights the floor rather than blowing out the body.
 	if (CoreGlow)
 	{
 		const float Flicker = 0.8f + 0.15f * FMath::Sin(OtterTime * 9.f) + 0.08f * FMath::Sin(OtterTime * 23.f);
 		CoreGlow->SetWorldLocation(FMath::Lerp(Pelvis, Spine, 0.5f) + Fwd * 90.f * S);
 		CoreGlow->SetIntensity(CoreGlowIntensity * (bPhaseTwo ? 2.f : 1.f) * Flicker);
 	}
+}
+
+void AVulcanBoss::LayoutAwakenedOtter(float S, const FVector& Fwd, const FVector& Right)
+{
+	// The chibi otter Vulcan becomes once provoked: the head is over half its height, the body is a short pear
+	// with a flush oval belly, the limbs are stubs and the tail is a bit longer than the original's.
+	// Same bones as the original layout, so every animation still drives it.
+	using namespace OtterBody;
+
+	USkeletalMeshComponent* Body = GetMesh();
+	const FVector Up = FVector::UpVector;
+
+	auto Bone = [Body](const TCHAR* Name) { return Body->GetSocketLocation(FName(Name)); };
+	auto Blob = [this, S](int32 Part, const FVector& Center, const FMatrix& Axes, const FVector& SizeCm)
+	{
+		PlaceBlob(OtterParts[Part], Center, Axes, SizeCm, S);
+	};
+	auto Limb = [this, S, Fwd](int32 Part, const FVector& A, const FVector& B, float RadiusCm)
+	{
+		PlaceLimb(OtterParts[Part], A, B, RadiusCm, S, Fwd);
+	};
+
+	const FVector Pelvis = Bone(TEXT("pelvis"));
+	const FVector Spine = Bone(TEXT("spine_03"));
+	const FVector NeckBone = Bone(TEXT("neck_01"));
+	const FVector HeadBone = Bone(TEXT("head"));
+
+	// ---- Body: an egg from the hips up under the chin, plus wide hips so it reads as a pear.
+	const FVector TorsoAxis = (NeckBone - Pelvis).GetSafeNormal();
+	const FMatrix TorsoAxes = FRotationMatrix::MakeFromZX(TorsoAxis.IsNearlyZero() ? Up : TorsoAxis, Fwd);
+	const FVector TF = TorsoAxes.GetScaledAxis(EAxis::X);
+	const FVector TU = TorsoAxes.GetScaledAxis(EAxis::Z);
+
+	const FVector BodyCenter = Pelvis - TU * 12.f * S;
+	const FVector TorsoSize(60.f, 68.f, 80.f);
+	Blob(Torso, BodyCenter, TorsoAxes, TorsoSize);
+	const FVector HipsCenter = BodyCenter - (TU * 21.f + TF * 4.f) * S;
+	Blob(Hips, HipsCenter, TorsoAxes, FVector(50.f, 72.f, 56.f));
+
+	// Cream belly: a shell of the body, so only a flush oval on the front shows. The glowing lava is kept to a
+	// small core in its middle (a shell of the belly).
+	{
+		FVector BellyCenter, BellySize, CoreCenter, CoreSize;
+		ShellOf(BodyCenter, TorsoAxes, TorsoSize, AzEl(0.f, -25.f), 0.62f, 0.05f, S, BellyCenter, BellySize);
+		Blob(BellyCream, BellyCenter, TorsoAxes, BellySize);
+		ShellOf(BellyCenter, TorsoAxes, BellySize, AzEl(0.f, -12.f), 0.906f, 0.025f, S, CoreCenter, CoreSize);
+		Blob(BellyPatch, CoreCenter, TorsoAxes, CoreSize);
+	}
+
+	// ---- Head: big and round, sitting on the body with no neck.
+	const FMatrix HeadAxes = FRotationMatrix::MakeFromZX(HeadBone - NeckBone, Fwd);
+	const FVector HF = HeadAxes.GetScaledAxis(EAxis::X);
+	const FVector HR = HeadAxes.GetScaledAxis(EAxis::Y);
+	const FVector HU = HeadAxes.GetScaledAxis(EAxis::Z);
+	// Radii: 42 deep, 55 wide, 47 tall (cm before boss scaling). Every face feature is placed on its surface.
+	const FVector HeadRadii(42.f, 55.f, 47.f);
+	const FVector HeadCenter = HeadBone + (HF * 4.f - HU * 5.f) * S;
+
+	// Distance from head center to the face surface at a given sideways/up offset (cm).
+	auto FaceDepth = [&HeadRadii](float SideCm, float UpCm)
+	{
+		const float Inside = 1.f - FMath::Square(SideCm / HeadRadii.Y) - FMath::Square(UpCm / HeadRadii.Z);
+		return HeadRadii.X * FMath::Sqrt(FMath::Max(Inside, 0.f));
+	};
+	auto OnFace = [&](float SideCm, float UpCm, float OutCm)
+	{
+		return HeadCenter + (HR * SideCm + HU * UpCm + HF * (FaceDepth(SideCm, UpCm) + OutCm)) * S;
+	};
+
+	Blob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
+
+	// Cream face pattern, shells of the head: a chin patch plus a patch on each side sweeping up to eye level.
+	// The brown hood curves down between the eyes to the nose (the snout fills in below it) and wraps a little
+	// under each eye.
+	{
+		FVector PatchCenter, PatchSize;
+		ShellOf(HeadCenter, HeadAxes, HeadRadii * 2.f, AzEl(0.f, -90.f), 0.42f, 0.03f, S, PatchCenter, PatchSize);
+		Blob(Muzzle, PatchCenter, HeadAxes, PatchSize);
+		ShellOf(HeadCenter, HeadAxes, HeadRadii * 2.f, AzEl(-57.f, -30.f), 0.83f, 0.03f, S, PatchCenter, PatchSize);
+		Blob(FaceSideL, PatchCenter, HeadAxes, PatchSize);
+		ShellOf(HeadCenter, HeadAxes, HeadRadii * 2.f, AzEl(57.f, -30.f), 0.83f, 0.03f, S, PatchCenter, PatchSize);
+		Blob(FaceSideR, PatchCenter, HeadAxes, PatchSize);
+	}
+
+	Blob(CheekL, OnFace(-26.f, -29.f, -12.f), HeadAxes, FVector(28.f, 32.f, 24.f));
+	Blob(CheekR, OnFace(26.f, -29.f, -12.f), HeadAxes, FVector(28.f, 32.f, 24.f));
+	Blob(Snout, OnFace(0.f, -26.f, -6.f), HeadAxes, FVector(20.f, 30.f, 18.f));
+	Blob(Nose, OnFace(0.f, -17.f, 2.5f), HeadAxes, FVector(9.f, 13.f, 8.f));
+	Blob(Mouth, OnFace(0.f, -29.f, -6.f), HeadAxes, FVector(3.f, 4.f, 2.f)); // hidden inside the snout
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const float Sign = Side == 0 ? -1.f : 1.f; // left side is -Right
+
+		// Big glossy eyes resting on the cream line, white catchlight up and to one side.
+		const FVector EyeCenter = OnFace(18.f * Sign, -8.f, 0.6f);
+		Blob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(5.f, 13.f, 17.f));
+		Blob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 2.f + HU * 3.7f - HR * 2.9f) * S, HeadAxes, FVector(1.5f, 4.f, 4.5f));
+
+		Blob(Side == 0 ? BrowDotL : BrowDotR, OnFace(15.f * Sign, 10.f, 0.3f), HeadAxes, FVector(2.f, 7.f, 4.f));
+
+		// Tall rounded ears on the top corners, tipped outward, cream inside.
+		const float EarTilt = FMath::DegreesToRadians(30.f);
+		const FMatrix EarAxes = FRotationMatrix::MakeFromZX(HU * FMath::Cos(EarTilt) + HR * Sign * FMath::Sin(EarTilt), HF);
+		const FVector EarCenter = HeadCenter + (HR * 40.f * Sign + HU * 36.f - HF * 5.f) * S;
+		Blob(Side == 0 ? EarL : EarR, EarCenter, EarAxes, FVector(12.f, 26.f, 32.f));
+		Blob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 5.f * S, EarAxes, FVector(3.f, 15.f, 19.f));
+
+		// Three short whiskers on each cheek.
+		for (int32 k = 0; k < 3; ++k)
+		{
+			const FVector Root = OnFace(14.f * Sign, -24.f - k * 3.f, -0.5f);
+			const FVector Tip = Root + (HR * 12.f * Sign - HF * 3.f + HU * (3.f - k * 3.f)) * S;
+			Limb((Side == 0 ? WhiskerL0 : WhiskerR0) + k, Root, Tip, 0.3f);
+		}
+	}
+
+	// ---- Stubby arms hanging from the sides of the body. The bones only steer their direction,
+	// since the mannequin's shoulders are hidden inside the big head.
+	const FVector UpperArm[2] = { Bone(TEXT("upperarm_l")), Bone(TEXT("upperarm_r")) };
+	const FVector LowerArm[2] = { Bone(TEXT("lowerarm_l")), Bone(TEXT("lowerarm_r")) };
+	const FVector Hand[2] = { Bone(TEXT("hand_l")), Bone(TEXT("hand_r")) };
+	const FVector TR = TorsoAxes.GetScaledAxis(EAxis::Y);
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const float Sign = Side == 0 ? -1.f : 1.f;
+		const FVector UpperDir = (LowerArm[Side] - UpperArm[Side]).GetSafeNormal();
+		const FVector ForearmDir = (Hand[Side] - LowerArm[Side]).GetSafeNormal();
+
+		const FVector Shoulder = BodyCenter + (TU * 26.f + TR * 28.f * Sign + TF * 4.f) * S;
+		const FVector Elbow = Shoulder + UpperDir * 16.f * S;
+		const FVector Wrist = Elbow + ForearmDir * 13.f * S;
+		const FMatrix PawAxes = FRotationMatrix::MakeFromZX(ForearmDir.IsNearlyZero() ? Up : ForearmDir, Fwd);
+
+		Limb(Side == 0 ? UpperArmL : UpperArmR, Shoulder, Elbow, 9.f);
+		Limb(Side == 0 ? LowerArmL : LowerArmR, Elbow, Wrist, 8.3f);
+		Blob(Side == 0 ? HandL : HandR, Wrist + ForearmDir * 3.f * S, PawAxes, FVector(17.f, 17.f, 18.f));
+	}
+
+	// ---- Short legs, mostly inside the body, with big round feet.
+	const FVector Thigh[2] = { Bone(TEXT("thigh_l")), Bone(TEXT("thigh_r")) };
+	const FVector Calf[2] = { Bone(TEXT("calf_l")), Bone(TEXT("calf_r")) };
+	const FVector Foot[2] = { Bone(TEXT("foot_l")), Bone(TEXT("foot_r")) };
+	const FVector Ball[2] = { Bone(TEXT("ball_l")), Bone(TEXT("ball_r")) };
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		Limb(Side == 0 ? ThighL : ThighR, Thigh[Side], Calf[Side], 15.f);
+		Limb(Side == 0 ? CalfL : CalfR, Calf[Side], Foot[Side], 12.f);
+
+		FVector FootDir = Ball[Side] - Foot[Side];
+		FootDir.Z = 0.f;
+		const FMatrix FootAxes = FRotationMatrix::MakeFromXZ(FootDir.IsNearlyZero() ? Fwd : FootDir, Up);
+		Blob(Side == 0 ? FootL : FootR, FMath::Lerp(Foot[Side], Ball[Side], 0.7f) + FootAxes.GetScaledAxis(EAxis::X) * 4.f * S,
+			FootAxes, FVector(32.f, 23.f, 16.f));
+	}
+
+	// ---- Tail: about a quarter longer than the original's. Drapes to the ground and curls to the side,
+	// lashing during Tail Lash.
+	const float GroundZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const bool bLashing = CurrentAttack == EVulcanAttack::TailLash;
+	const float SwayDegrees = bLashing ? FMath::Sin(OtterTime * 14.f) * 50.f : FMath::Sin(OtterTime * 2.5f) * 10.f;
+	const FQuat Sway(Up, FMath::DegreesToRadians(SwayDegrees));
+	const FVector TailRoot = HipsCenter - (TF * 26.f + TU * 4.f) * S;
+
+	auto TailPoint = [&](float BackCm, float SideCm, float Z)
+	{
+		FVector Point = TailRoot + Sway.RotateVector(-Fwd * BackCm * S + Right * SideCm * S);
+		Point.Z = Z;
+		return Point;
+	};
+
+	const FVector T1 = TailPoint(32.5f, 0.f, FMath::Lerp(TailRoot.Z, GroundZ, 0.55f));
+	const FVector T2 = TailPoint(60.f, 7.5f, GroundZ + 7.f * S);
+	const FVector T3 = TailPoint(70.f, 32.5f, GroundZ + 5.f * S);
+
+	Limb(Tail0, TailRoot, T1, 13.f);
+	Limb(Tail1, T1, T2, 10.5f);
+	Limb(Tail2, T2, T3, 8.f);
+
+	// ---- Obsidian spikes: a ridge down the back of the egg, three peaks on top of the head, two on the tail.
+	auto Spike = [this, S, Fwd](int32 Part, const FVector& Base, const FVector& Direction, float LengthCm, float WidthCm)
+	{
+		PlaceSpike(OtterParts[Part], Base, Direction, LengthCm, WidthCm, S, Fwd);
+	};
+
+	const FVector BackLean = -Fwd * 0.75f + Up * 0.65f;
+	const float BackHeight[4] = { -24.f, -8.f, 8.f, 22.f }; // cm up the body from its center
+	const float BackLength[4] = { 17.f, 24.f, 26.f, 19.f };
+	const float BackWidth[4] = { 11.f, 14.f, 15.f, 12.f };
+	const FVector BodyRadii = TorsoSize * 0.5f;
+	for (int32 k = 0; k < 4; ++k)
+	{
+		const float Depth = BodyRadii.X * FMath::Sqrt(FMath::Max(1.f - FMath::Square(BackHeight[k] / BodyRadii.Z), 0.f));
+		Spike(SpikeBack0 + k, BodyCenter + (TU * BackHeight[k] - TF * (Depth - 2.f)) * S, BackLean, BackLength[k], BackWidth[k]);
+	}
+
+	const float PeakSide[3] = { -18.f, 0.f, 18.f };
+	const float PeakLength[3] = { 24.f, 34.f, 24.f };
+	const float PeakWidth[3] = { 17.f, 22.f, 17.f };
+	for (int32 k = 0; k < 3; ++k)
+	{
+		const float Top = HeadRadii.Z * FMath::Sqrt(FMath::Max(1.f - FMath::Square(PeakSide[k] / HeadRadii.Y), 0.f));
+		const FVector Base = HeadCenter + (HU * (Top - 3.f) - HF * 3.f + HR * PeakSide[k]) * S;
+		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.025f) - HF * 0.3f, PeakLength[k], PeakWidth[k]);
+	}
+
+	const FVector TailLean = Up - Sway.RotateVector(Fwd) * 0.4f;
+	Spike(SpikeTail0, FMath::Lerp(TailRoot, T1, 0.6f) + Up * 10.f * S, TailLean, 14.f, 10.f);
+	Spike(SpikeTail1, FMath::Lerp(T1, T2, 0.5f) + Up * 8.f * S, TailLean, 11.f, 8.f);
+
+	PlaceCoreGlow(Pelvis, Spine, Fwd, S);
 }
 
 void AVulcanBoss::StartFight()
@@ -993,7 +1332,20 @@ void AVulcanBoss::StartFight()
 	}
 
 	bFightActive = true;
+	ShowAwakenedForm();
 	OnFightStarted();
+}
+
+void AVulcanBoss::ShowAwakenedForm()
+{
+	if (bAwakenedShown || !bAwakenedForm || !bUseOtterBody)
+	{
+		return;
+	}
+
+	bAwakenedShown = true;
+	ApplyOtterLook();
+	OnAwakenedFormShown();
 }
 
 // ============================================================ Decision making
@@ -1202,12 +1554,14 @@ void AVulcanBoss::FinishAttack()
 void AVulcanBoss::StartTailLash()
 {
 	PlayMontageScaled(TailLashMontage);
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 1.3f, 0.7f, 6000.f);
 	Schedule(AttackTimer, &AVulcanBoss::TailLashHit, TailLashHitDelay / GetSpeedScale());
 }
 
 void AVulcanBoss::TailLashHit()
 {
 	const float HalfArc = TailLashArcDegrees * 0.5f;
+	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.6f, 0.45f, 5000.f);
 
 	if (bShowDebug)
 	{
@@ -1240,6 +1594,7 @@ void AVulcanBoss::SpitFire()
 
 		const FVector Muzzle = GetActorTransform().TransformPosition(SpitMuzzleOffset);
 		const FRotator BaseRotation = (Player->GetActorLocation() - Muzzle).Rotation();
+		GameAudio::Play(this, TEXT("Spit"), Muzzle, 1.6f, 0.7f, 6000.f);
 		const int32 Count = FMath::Max(1, bPhaseTwo ? PhaseTwoSpitShardCount : SpitShardCount);
 
 		FActorSpawnParameters Params;
@@ -1273,6 +1628,7 @@ void AVulcanBoss::StartBreath()
 {
 	PlayMontageScaled(BreathMontage);
 	OnBreathWindup();
+	GameAudio::Play(this, TEXT("Inhale"), GetActorLocation(), 3.f, 0.5f, 6000.f);
 	Schedule(AttackTimer, &AVulcanBoss::BeginBreathing, BreathWindup / GetSpeedScale());
 }
 
@@ -1280,12 +1636,15 @@ void AVulcanBoss::BeginBreathing()
 {
 	BreathTimeRemaining = BreathDuration + (bPhaseTwo ? PhaseTwoBreathExtraDuration : 0.f);
 	OnBreathStarted();
+	GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.4f, 0.7f, 7000.f); // the flames' roar comes from FireFX
 
 	// Visible flames from the mouth along Vulcan's facing (the damage cone in BreathTick is unchanged).
+	// The lava mouth part sits at the mouth in both otter forms (the awakened form's Muzzle is a face patch
+	// centred inside the head).
 	USceneComponent* Mouth = GetMesh();
-	if (OtterParts.IsValidIndex(OtterBody::Muzzle) && OtterParts[OtterBody::Muzzle])
+	if (OtterParts.IsValidIndex(OtterBody::Mouth) && OtterParts[OtterBody::Mouth])
 	{
-		Mouth = OtterParts[OtterBody::Muzzle];
+		Mouth = OtterParts[OtterBody::Mouth];
 	}
 	AFireFX::Spawn(GetWorld(), Mouth->GetComponentLocation(),
 		AFireFX::BreathPreset(BreathRange + (bPhaseTwo ? PhaseTwoBreathExtraRange : 0.f),
@@ -1346,6 +1705,8 @@ void AVulcanBoss::StartDive()
 {
 	PlayMontageScaled(DiveMontage);
 	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(180.f, 70));
+	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 1.3f, 0.6f, 6000.f);
+	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.5f, 0.4f, 5000.f);
 	Schedule(AttackTimer, &AVulcanBoss::DiveSubmerge, DiveSubmergeTime / GetSpeedScale());
 }
 
@@ -1353,6 +1714,8 @@ void AVulcanBoss::DiveSubmerge()
 {
 	OnDiveSubmerged(GetFeetLocation());
 	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(260.f, 110));
+	GameAudio::Play(this, TEXT("Thud"), GetFeetLocation(), 1.4f, 0.45f, 6000.f);
+	GameAudio::Play(this, TEXT("Stones"), GetFeetLocation(), 2.f, 0.8f, 5000.f);
 
 	// Disable movement before collision, otherwise Vulcan falls through the floor.
 	GetCharacterMovement()->DisableMovement();
@@ -1376,6 +1739,7 @@ void AVulcanBoss::DiveShowWarning()
 
 	const float WarningTime = DiveWarningTime / GetSpeedScale();
 	AFireFX::Spawn(GetWorld(), Ground, AFireFX::EmbersPreset(DiveRadius, WarningTime));
+	GameAudio::Play(this, TEXT("Thunder"), Ground, 1.2f, 0.35f, 5000.f); // rumbling underground
 	if (bShowDebug)
 	{
 		DrawDebugCircle(GetWorld(), Ground + FVector(0.f, 0.f, 5.f), DiveRadius, 32, FColor::Orange, false, WarningTime, 0, 4.f, FVector(1.f, 0.f, 0.f), FVector(0.f, 1.f, 0.f), false);
@@ -1396,6 +1760,9 @@ void AVulcanBoss::DiveEmerge()
 	const FVector Ground = GetFeetLocation();
 	OnDiveEmerged(Ground);
 	AFireFX::Spawn(GetWorld(), Ground, AFireFX::BurstPreset(DiveRadius, 160));
+	GameAudio::Play(this, TEXT("Thud"), Ground, 1.6f, 0.4f, 7000.f);
+	GameAudio::Play(this, TEXT("Stones"), Ground, 2.f, 0.7f, 5000.f);
+	GameAudio::Play(this, TEXT("Roar"), Ground, 1.2f, 0.65f, 7000.f);
 
 	if (APawn* Player = GetPlayer())
 	{
@@ -1461,6 +1828,7 @@ void AVulcanBoss::HandleHealthChanged(float NewHealth, float MaxHealth)
 	{
 		NextHitReactTime = GetWorld()->GetTimeSeconds() + HitReactCooldown;
 		PlayMontageScaled(HitReactMontage);
+		GameAudio::Play(this, TEXT("Hurt"), GetActorLocation(), 1.5f, 0.7f, 6000.f);
 	}
 
 	if (!bPhaseTwo && NewHealth > 0.f && MaxHealth > 0.f && NewHealth / MaxHealth <= PhaseTwoHealthPercent)
@@ -1468,6 +1836,8 @@ void AVulcanBoss::HandleHealthChanged(float NewHealth, float MaxHealth)
 		bPhaseTwo = true;
 		GetCharacterMovement()->MaxWalkSpeed = WalkSpeed * PhaseTwoSpeedMultiplier;
 		OnPhaseTwoStarted();
+		GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.4f, 0.55f, 9000.f);
+		GameAudio::Play2D(this, TEXT("Thunder"), 1.f, 0.7f);
 	}
 }
 
@@ -1499,6 +1869,8 @@ void AVulcanBoss::HandleDeath(AActor* Killer)
 
 	StopAnimMontage();
 	PlayMontageScaled(DeathMontage);
+	GameAudio::Play(this, TEXT("Death"), GetActorLocation(), 1.2f, 0.6f, 9000.f);
+	GameAudio::Play(this, TEXT("Thud"), GetActorLocation(), 1.3f, 0.4f, 7000.f);
 	GetCharacterMovement()->DisableMovement();
 
 	// Lava cools to black, eyes and core glow go out.

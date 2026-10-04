@@ -6,6 +6,7 @@
 
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UAudioComponent;
 class UPointLightComponent;
 
 /** How a fire effect emits flames. Use the presets on AFireFX. */
@@ -35,11 +36,21 @@ struct FFireSettings
 	float GrowTo = 1.3f;
 	/** How much flames stretch along their motion. */
 	float Stretch = 1.8f;
-	/** Share of white-hot, orange and dark-red (ember) flames. */
+	/** Share of each colour band (white-hot, orange and dark-red embers by default). */
 	FVector Mix = FVector(0.25f, 0.5f, 0.25f);
+	FLinearColor Colors[3] = { FLinearColor(1.f, 0.6f, 0.15f), FLinearColor(1.f, 0.24f, 0.03f), FLinearColor(0.7f, 0.06f, 0.01f) };
+	/** Emissive strength per band (lava uses 4). */
+	float Glow[3] = { 4.f, 2.5f, 1.2f };
+	/** Above 0: soft see-through puffs (M_SandWisp, e.g. dust) instead of solid flames. */
+	float Opacity = 0.f;
+	/** Size wobble, as a fraction of the size. */
+	float Flicker = 0.18f;
 	/** Flickering orange light. 0 = no light. */
 	float LightIntensity = 0.f;
 	float LightRadius = 900.f;
+	/** Crackling fire loop (S_FireLoop). 0 = silent. */
+	float SoundVolume = 0.f;
+	float SoundRange = 2500.f;
 	/** Breath: the effect follows a component and fires along its owner's forward, tilted down by this much. */
 	float FollowPitchDegrees = -8.f;
 };
@@ -68,6 +79,10 @@ public:
 	static FFireSettings EmbersPreset(float Radius, float Duration);
 	/** Flames licking up from a burning patch of ground. */
 	static FFireSettings GroundFirePreset(float Radius, float Duration);
+	/** A brazier or torch that burns forever, with a warm flickering light. */
+	static FFireSettings TorchPreset(float Radius);
+	/** A puff of sand kicked up from the ground, spreading out to about Radius. */
+	static FFireSettings DustPreset(float Radius, int32 Count);
 
 	/** Stop emitting; the effect fades out and removes itself. */
 	void Stop();
@@ -98,6 +113,9 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UPointLightComponent> Light;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> Audio;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BandMaterials[3];

@@ -1,7 +1,9 @@
 #include "MeleeAttackComponent.h"
+#include "GameAudio.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
 #include "DodgeComponent.h"
+#include "LockOnComponent.h"
 #include "PlungeAttackComponent.h"
 #include "SpearGripComponent.h"
 #include "Animation/AnimMontage.h"
@@ -77,8 +79,12 @@ bool UMeleeAttackComponent::TryAttack()
 		}
 	}
 
-	// Swing toward the direction the player is pressing.
+	// Swing toward the locked-on target, otherwise toward the direction the player is pressing.
 	FVector Direction = Character->GetLastMovementInputVector();
+	if (const ULockOnComponent* LockOn = Character->FindComponentByClass<ULockOnComponent>(); LockOn && LockOn->IsLocked())
+	{
+		Direction = LockOn->GetTargetPoint() - Character->GetActorLocation();
+	}
 	Direction.Z = 0.f;
 	if (!Direction.IsNearlyZero())
 	{
@@ -156,6 +162,9 @@ void UMeleeAttackComponent::DoHit()
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(Character);
 
+	// Heavier attacks swing with a deeper whoosh.
+	GameAudio::Play(this, TEXT("Swing"), Center, 0.7f, Damage >= 40.f ? 0.7f : 0.9f, 2500.f);
+
 	TArray<FOverlapResult> Overlaps;
 	World->OverlapMultiByObjectType(
 		Overlaps,
@@ -177,6 +186,7 @@ void UMeleeAttackComponent::DoHit()
 		AlreadyHit.Add(HitActor);
 
 		UGameplayStatics::ApplyDamage(HitActor, Damage, Character->GetController(), Character, UDamageType::StaticClass());
+		GameAudio::Play(this, TEXT("Hit"), Center, 1.f, Damage >= 40.f ? 0.8f : 1.f);
 		OnAttackHit.Broadcast(HitActor, HitActor->GetActorLocation());
 	}
 

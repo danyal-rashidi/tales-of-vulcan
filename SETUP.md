@@ -70,7 +70,20 @@ Right-click → search "Event On ..." to add these:
 **Health bar:** in the widget, bind the progress bar percent to
 `BP_Vulcan → Health Component → Get Health Percent`.
 
-## 6. Tuning
+## 6. Two otter forms
+
+Vulcan starts as the **original otter** (glasses, no spikes), shown as a bronze statue while
+**Statue Intro** is on. Once provoked (the statue awakens, the fight starts, or Vulcan is hit), it
+switches to the **awakened otter**: a chibi otter with a huge round head, a curved cream face pattern
+(brown hood down to the nose, cream sweeping up the cheeks), a cream belly with a small glowing lava
+core, obsidian spikes, stubby arms and legs, and a slightly longer tail. Both forms use the same colors
+(**Vulcan|Otter Body**) and follow the same skeleton, so all animations work on either.
+
+- Untick **Awakened Form** to keep the original otter for the whole fight.
+- Tick **Preview Awakened Form** to see it in the editor viewport (doesn't affect play).
+- **On Awakened Form Shown** (event) fires at the switch: a good place for a puff of smoke or fire.
+
+## 7. Tuning
 
 Everything is editable in BP_Vulcan's Details under **Vulcan|...**: damage, ranges, timings,
 cooldown, Phase 2 multipliers.

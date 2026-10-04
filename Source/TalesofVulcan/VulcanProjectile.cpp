@@ -1,4 +1,5 @@
 #include "VulcanProjectile.h"
+#include "GameAudio.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SphereComponent.h"
 #include "GameFramework/RotatingMovementComponent.h"
@@ -124,6 +125,9 @@ void AVulcanProjectile::HandleStop(const FHitResult& ImpactResult)
 		UGameplayStatics::ApplyDamage(HitActor, Damage, GetInstigatorController(), this, UDamageType::StaticClass());
 	}
 
+	// Obsidian shattering.
+	GameAudio::Play(this, TEXT("Crack"), ImpactResult.ImpactPoint, 0.9f, 1.1f, 3500.f);
+	GameAudio::Play(this, TEXT("Stones"), ImpactResult.ImpactPoint, 2.f, 1.2f, 3000.f);
 	OnImpact(ImpactResult.ImpactPoint);
 	Destroy();
 }

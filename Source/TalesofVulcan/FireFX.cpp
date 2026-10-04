@@ -1,17 +1,12 @@
 #include "FireFX.h"
+#include "GameAudio.h"
+#include "Components/AudioComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
-
-namespace FireLook
-{
-	// White-hot core, orange flame, dark-red embers. Glow is M_VulcanShape's emissive strength (lava uses 4).
-	const FLinearColor Colors[3] = { FLinearColor(1.f, 0.6f, 0.15f), FLinearColor(1.f, 0.24f, 0.03f), FLinearColor(0.7f, 0.06f, 0.01f) };
-	const float Glow[3] = { 4.f, 2.5f, 1.2f };
-}
 
 AFireFX::AFireFX()
 {
@@ -84,6 +79,8 @@ FFireSettings AFireFX::BreathPreset(float Range, float HalfAngleDegrees, float D
 	S.Stretch = 2.2f;
 	S.Mix = FVector(0.35f, 0.45f, 0.2f);
 	S.LightIntensity = 120.f;
+	S.SoundVolume = 2.5f;
+	S.SoundRange = 3500.f;
 	S.LightRadius = Range * 1.6f;
 	return S;
 }
@@ -105,6 +102,8 @@ FFireSettings AFireFX::BurstPreset(float Radius, int32 Count)
 	S.Mix = FVector(0.2f, 0.5f, 0.3f);
 	S.LightIntensity = 250.f;
 	S.LightRadius = FMath::Max(Radius * 4.f, 900.f);
+	S.SoundVolume = 2.5f;
+	S.SoundRange = 4000.f;
 	return S;
 }
 
@@ -125,6 +124,7 @@ FFireSettings AFireFX::EmbersPreset(float Radius, float Duration)
 	S.Mix = FVector(0.3f, 0.4f, 0.3f);
 	S.LightIntensity = 30.f;
 	S.LightRadius = Radius * 2.f;
+	S.SoundVolume = 0.8f;
 	return S;
 }
 
@@ -145,6 +145,55 @@ FFireSettings AFireFX::GroundFirePreset(float Radius, float Duration)
 	S.Mix = FVector(0.25f, 0.5f, 0.25f);
 	S.LightIntensity = 90.f;
 	S.LightRadius = Radius * 2.f;
+	S.SoundVolume = 1.5f;
+	return S;
+}
+
+FFireSettings AFireFX::TorchPreset(float Radius)
+{
+	FFireSettings S;
+	S.Rate = 45.f;
+	S.Duration = 1.0e7f; // burns for the whole game
+	S.SpawnRadius = Radius;
+	S.SpreadDegrees = 10.f;
+	S.Speed = FVector2D(60.f, 140.f);
+	S.Lifetime = FVector2D(0.4f, 0.8f);
+	S.Size = FVector2D(14.f, 28.f);
+	S.GrowTo = 0.6f;
+	S.Rise = 260.f;
+	S.Drag = 1.f;
+	S.Stretch = 1.5f;
+	S.Mix = FVector(0.3f, 0.5f, 0.2f);
+	S.LightIntensity = 160.f;
+	S.LightRadius = 1600.f;
+	S.SoundVolume = 0.7f;
+	S.SoundRange = 1500.f;
+	return S;
+}
+
+FFireSettings AFireFX::DustPreset(float Radius, int32 Count)
+{
+	FFireSettings S;
+	S.Burst = Count;
+	S.SpawnRadius = Radius * 0.25f;
+	S.SpreadDegrees = 75.f;
+	S.Speed = FVector2D(Radius * 0.3f, Radius * 0.8f);
+	S.Outward = Radius * 1.5f;
+	S.Lifetime = FVector2D(0.7f, 1.4f);
+	S.Size = FVector2D(Radius * 0.15f, Radius * 0.3f);
+	S.GrowTo = 3.f;
+	S.Rise = 30.f;
+	S.Drag = 2.5f;
+	S.Stretch = 1.f;
+	S.Flicker = 0.f;
+	S.Mix = FVector(0.4f, 0.4f, 0.2f);
+	// Same sand as the blowing desert sand (Scripts/Colosseum/build_roman_world.py).
+	S.Colors[0] = FLinearColor(0.66f, 0.51f, 0.33f);
+	S.Colors[1] = FLinearColor(0.55f, 0.43f, 0.29f);
+	S.Colors[2] = FLinearColor(0.74f, 0.62f, 0.45f);
+	// Unlit, so kept dim to sit in both the golden-hour and the storm light.
+	S.Glow[0] = S.Glow[1] = S.Glow[2] = 0.22f;
+	S.Opacity = 0.3f;
 	return S;
 }
 
@@ -153,13 +202,15 @@ void AFireFX::Start(const FFireSettings& InSettings, USceneComponent* InFollow)
 	Settings = InSettings;
 	Follow = InFollow;
 
-	if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet))
+	const TCHAR* MaterialPath = Settings.Opacity > 0.f ? TEXT("/Game/ThirdPerson/Colosseum/M_SandWisp.M_SandWisp") : TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape");
+	if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, MaterialPath, nullptr, LOAD_NoWarn | LOAD_Quiet))
 	{
 		for (int32 Band = 0; Band < BandCount; ++Band)
 		{
 			BandMaterials[Band] = UMaterialInstanceDynamic::Create(Base, this);
-			BandMaterials[Band]->SetVectorParameterValue(TEXT("Color"), FireLook::Colors[Band]);
-			BandMaterials[Band]->SetScalarParameterValue(TEXT("Glow"), FireLook::Glow[Band]);
+			BandMaterials[Band]->SetVectorParameterValue(TEXT("Color"), Settings.Colors[Band]);
+			BandMaterials[Band]->SetScalarParameterValue(TEXT("Glow"), Settings.Glow[Band]);
+			BandMaterials[Band]->SetScalarParameterValue(TEXT("Opacity"), Settings.Opacity);
 			BandMaterials[Band]->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 			BandMaterials[Band]->SetScalarParameterValue(TEXT("Roughness"), 1.f);
 			Bands[Band]->SetMaterial(0, BandMaterials[Band]);
@@ -181,6 +232,11 @@ void AFireFX::Start(const FFireSettings& InSettings, USceneComponent* InFollow)
 
 	Light->SetAttenuationRadius(Settings.LightRadius);
 	Light->SetVisibility(Settings.LightIntensity > 0.f);
+	if (Settings.SoundVolume > 0.f)
+	{
+		// Stays where the effect started (stops with this actor); a breath barely moves while it lasts.
+		Audio = GameAudio::Loop(this, TEXT("FireLoop"), RootComponent, GetActorLocation(), Settings.SoundVolume, Settings.SoundRange);
+	}
 	Light->SetWorldLocation(EmitterLocation());
 
 	for (int32 i = 0; i < Settings.Burst; ++i)
@@ -317,7 +373,7 @@ void AFireFX::Tick(float DeltaSeconds)
 			// Pop in fast, widen as it travels, burn out at the end, with a flicker.
 			const float T = Flame.Age / Flame.Life;
 			const float Envelope = FMath::Min(T * 6.f, 1.f) * (1.f - T * T);
-			const float Flicker = 1.f + 0.18f * FMath::Sin(Time * 27.f + Flame.Phase * 5.f);
+			const float Flicker = 1.f + Settings.Flicker * FMath::Sin(Time * 27.f + Flame.Phase * 5.f);
 			const float Size = Flame.Size * FMath::Lerp(1.f, Settings.GrowTo, T) * Envelope * Flicker;
 
 			const float Speed = Flame.Velocity.Size();
@@ -345,6 +401,12 @@ void AFireFX::Tick(float DeltaSeconds)
 		{
 			Light->SetWorldLocation(Sum / Alive);
 		}
+	}
+
+	if (!bEmitting && Audio)
+	{
+		Audio->FadeOut(0.6f, 0.f);
+		Audio = nullptr;
 	}
 
 	if (!bEmitting && Alive == 0)

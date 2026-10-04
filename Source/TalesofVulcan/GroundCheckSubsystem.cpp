@@ -1,11 +1,16 @@
 #include "GroundCheckSubsystem.h"
+#include "DodgeComponent.h"
 #include "FireFX.h"
+#include "HealthComponent.h"
 #include "HipRootMotionComponent.h"
+#include "PlungeAttackComponent.h"
+#include "LockOnComponent.h"
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
 #include "VulcanBoss.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "AudioMixerBlueprintLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Camera/CameraActor.h"
@@ -29,7 +34,7 @@ bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	const TCHAR* CommandLine = FCommandLine::Get();
 	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
-		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")))
+		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -55,6 +60,10 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("FireShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartFireShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("LockShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartLockShot, 2.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
 	{
@@ -201,6 +210,64 @@ void UGroundCheckSubsystem::StartBossProbe()
 	After(26.f, []() { FPlatformMisc::RequestExit(false); });
 }
 
+void UGroundCheckSubsystem::StartLockShot()
+{
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> It(World);
+	AVulcanBoss* Boss = It ? *It : nullptr;
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
+	if (!Boss || !Player || !Controller)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	Boss->StartFight();
+
+	// Stand in the open 12 m in front of Vulcan.
+	After(5.5f, [Player, Boss]()
+	{
+		const FVector Away = (Player->GetActorLocation() - Boss->GetActorLocation()).GetSafeNormal2D();
+		Player->SetActorLocation(Boss->GetActorLocation() + Away * 1200.f + FVector(0.f, 0.f, 50.f), false, nullptr, ETeleportType::TeleportPhysics);
+	});
+	// After the wake-up roar: face roughly toward Vulcan, lock on, and watch through the player's camera.
+	After(6.f, [Player, Controller, Boss]()
+	{
+		Controller->SetControlRotation((Boss->GetActorLocation() - Player->GetActorLocation()).Rotation() + FRotator(0.f, 25.f, 0.f));
+	});
+	After(6.3f, [Player]()
+	{
+		ULockOnComponent* LockOn = Player->FindComponentByClass<ULockOnComponent>();
+		UE_LOG(LogTemp, Warning, TEXT("[LockShot] lock-on component %s, locked: %d"), LockOn ? TEXT("found") : TEXT("missing"), LockOn && LockOn->ToggleLock() ? 1 : 0);
+	});
+	// Roll, jump and plunge (dust), hit Vulcan (boss bar trail), then kill him (victory banner).
+	if (UHealthComponent* PlayerHealth = Player->FindComponentByClass<UHealthComponent>())
+	{
+		PlayerHealth->bInvulnerable = true;
+	}
+	After(8.f, [Player]() { if (UDodgeComponent* Dodge = Player->FindComponentByClass<UDodgeComponent>()) { Dodge->TryDodge(); } });
+	After(9.5f, [Player]() { Player->Jump(); });
+	After(9.8f, [Player]() { if (UPlungeAttackComponent* Plunge = Player->FindComponentByClass<UPlungeAttackComponent>()) { Plunge->TryPlunge(); } });
+	auto Hit = [World, Player, Boss](float Amount)
+	{
+		UGameplayStatics::ApplyDamage(Boss, Amount, UGameplayStatics::GetPlayerController(World, 0), Player, UDamageType::StaticClass());
+	};
+	After(11.f, [Hit]() { Hit(150.f); });
+	After(13.f, [Hit]() { Hit(100000.f); });
+	for (int32 i = 0; i < 26; ++i)
+	{
+		After(6.4f + i * 0.5f, [this, i]() { Shot(FString::Printf(TEXT("lock_%02d"), i)); });
+	}
+
+	// Everything heard during the run, to Saved/SpearShots/lock_audio.wav (the wav is written in the background).
+	UAudioMixerBlueprintLibrary::StartRecordingOutput(World, 20.f);
+	After(19.5f, [World]()
+	{
+		UAudioMixerBlueprintLibrary::StopRecordingOutput(World, EAudioRecordingExportType::WavFile, TEXT("lock_audio"), FPaths::ProjectSavedDir() / TEXT("SpearShots"));
+	});
+	After(21.f, []() { FPlatformMisc::RequestExit(false); });
+}
+
 void UGroundCheckSubsystem::StartFireShot()
 {
 	UWorld* World = GetWorld();
@@ -240,7 +307,18 @@ void UGroundCheckSubsystem::StartFireShot()
 		AFireFX::Spawn(World, Spot + FVector(400.f, 0.f, 0.f), AFireFX::GroundFirePreset(300.f, 3.f));
 	});
 	After(4.6f, [this]() { Shot(TEXT("fire_embers_ground")); });
-	After(5.2f, []() { FPlatformMisc::RequestExit(false); });
+
+	// Dust once the fire is out: plunge slam (left) and a footstep puff (right), seen from above the player.
+	After(6.8f, [this, World, Feet, Spot, Forward, Side]()
+	{
+		AFireFX::Spawn(World, Spot - Side * 250.f, AFireFX::DustPreset(200.f, 40));
+		AFireFX::Spawn(World, Spot + Side * 250.f, AFireFX::DustPreset(50.f, 5));
+		ShootFrom(Feet - Forward * 200.f + FVector(0.f, 0.f, 300.f), Spot + FVector(0.f, 0.f, 60.f));
+	});
+	After(7.0f, [this]() { Shot(TEXT("dust_a")); });
+	After(7.4f, [this]() { Shot(TEXT("dust_b")); });
+	After(7.9f, [this]() { Shot(TEXT("dust_c")); });
+	After(8.4f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)
@@ -251,7 +329,8 @@ void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)
 
 void UGroundCheckSubsystem::Shot(const FString& Name)
 {
-	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), false, false);
+	// Lock-on shots include the UI so the target dot shows.
+	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
 }
 
 void UGroundCheckSubsystem::StartSpearShot()

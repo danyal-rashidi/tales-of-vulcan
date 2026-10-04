@@ -1,4 +1,5 @@
 #include "PlungeAttackComponent.h"
+#include "GameAudio.h"
 #include "SlamCameraShake.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
@@ -109,6 +110,7 @@ bool UPlungeAttackComponent::TryPlunge()
 		Character->PlayAnimMontage(PlungeMontage, 1.f, StartSection);
 	}
 
+	GameAudio::Play(this, TEXT("Swing"), Character->GetActorLocation(), 0.9f, 0.55f);
 	OnPlungeStarted.Broadcast();
 	World->GetTimerManager().SetTimer(PlungeTimer, this, &UPlungeAttackComponent::StartDive, FMath::Max(HangTime, 0.01f), false);
 	return true;
@@ -220,6 +222,10 @@ void UPlungeAttackComponent::Impact(const FVector& ImpactLocation)
 		}
 	}
 
+	// Deep thump, cracking stone and scattering pebbles.
+	GameAudio::Play(this, TEXT("Thud"), ImpactLocation, 1.1f, 0.55f, 5000.f);
+	GameAudio::Play(this, TEXT("Crack"), ImpactLocation, 0.5f, 0.7f, 5000.f);
+	GameAudio::Play(this, TEXT("Stones"), ImpactLocation, 1.8f);
 	OnPlungeLanded.Broadcast(ImpactLocation);
 	World->GetTimerManager().SetTimer(PlungeTimer, this, &UPlungeAttackComponent::EndRecovery, FMath::Max(LandingRecovery, 0.01f), false);
 }

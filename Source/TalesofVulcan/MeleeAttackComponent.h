@@ -69,9 +69,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack")
 	TObjectPtr<UAnimMontage> AttackMontage;
 
-	/** Draws the hit sphere (green = hit something, red = missed). Turn off for the demo. */
+	/** Draws the hit sphere (green = hit something, red = missed). Turn on while tuning. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack")
-	bool bShowDebug = true;
+	bool bShowDebug = false;
 
 	/** Hook up a swing sound here. */
 	UPROPERTY(BlueprintAssignable, Category="Attack")

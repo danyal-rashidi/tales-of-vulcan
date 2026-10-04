@@ -1,5 +1,9 @@
 #include "ArenaDressingSubsystem.h"
+#include "FireFX.h"
+#include "GameAudio.h"
 #include "WindGrass.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/DirectionalLight.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/ExponentialHeightFog.h"
@@ -106,6 +110,19 @@ namespace ArenaLayout
 	{
 		return FMath::Abs(FMath::FindDeltaAngleDegrees(Degrees, 90.f)) < 14.f;
 	}
+
+	/** Points a material's <Param>_D/_N/_R textures at a photo-scanned set (Poly Haven, CC0) in /Game/Environment/Textures. */
+	void UseTextures(UMaterialInstanceDynamic* Material, const TCHAR* Param, const TCHAR* Set)
+	{
+		for (const TCHAR* Map : { TEXT("D"), TEXT("N"), TEXT("R") })
+		{
+			const FString Path = FString::Printf(TEXT("/Game/Environment/Textures/T_%s_%s.T_%s_%s"), Set, Map, Set, Map);
+			if (UTexture* Texture = LoadObject<UTexture>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet))
+			{
+				Material->SetTextureParameterValue(*FString::Printf(TEXT("%s_%s"), Param, Map), Texture);
+			}
+		}
+	}
 }
 
 void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -132,10 +149,13 @@ void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	CleanFloor(InWorld);
 	LaySandFloor(InWorld);
 	BuildStairs(InWorld);
+	PlaceBraziers(InWorld);
 	BuildRuins(InWorld);
 	PlantGrass(InWorld);
 	WeatherMaterials(InWorld);
 	ColorGrade(InWorld);
+	SetupLighting(InWorld);
+	GameAudio::Loop2D(&InWorld, TEXT("WindLoop"), 0.8f);
 }
 
 void UArenaDressingSubsystem::SetupFog(UWorld& World)
@@ -248,6 +268,7 @@ void UArenaDressingSubsystem::LaySandFloor(UWorld& World)
 	if (UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Sand, this))
 	{
 		Material->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.74f, 0.64f, 0.5f));
+		ArenaLayout::UseTextures(Material, TEXT("Sand"), TEXT("DesertSand"));
 		Component->SetMaterial(0, Material);
 	}
 }
@@ -405,6 +426,107 @@ void UArenaDressingSubsystem::BuildStairs(UWorld& World)
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("ArenaDressing: replaced %d ramps with stairs"), Stairs);
+}
+
+void UArenaDressingSubsystem::SetupLighting(UWorld& World)
+{
+	// A low, warm late-afternoon sun: long shadows, golden light and shafts through the arches.
+	// Vulcan's storm later swings it from here to the blood-red sun.
+	for (TActorIterator<ADirectionalLight> It(&World); It; ++It)
+	{
+		UDirectionalLightComponent* Sun = Cast<UDirectionalLightComponent>(It->GetLightComponent());
+		if (!Sun || Sun->Mobility == EComponentMobility::Static)
+		{
+			continue;
+		}
+		FRotator Angle = Sun->GetComponentRotation();
+		Angle.Pitch = -32.f;
+		Sun->SetWorldRotation(Angle);
+		Sun->SetLightColor(FLinearColor(1.f, 0.8f, 0.6f));
+		Sun->bEnableLightShaftBloom = true;
+		Sun->BloomScale = 0.25f;
+		Sun->BloomThreshold = 0.7f;
+		Sun->BloomTint = FColor(255, 210, 160);
+		Sun->MarkRenderStateDirty();
+		return;
+	}
+}
+
+void UArenaDressingSubsystem::PlaceBraziers(UWorld& World)
+{
+	UStaticMesh* Pedestal = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/ThirdPerson/Colosseum/World/SM_RomanBlock_A.SM_RomanBlock_A"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	UMaterialInterface* Shape = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Pedestal || !Cylinder || !Shape)
+	{
+		return;
+	}
+
+	UMaterialInstanceDynamic* Iron = UMaterialInstanceDynamic::Create(Shape, this);
+	Iron->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.05f, 0.045f, 0.04f));
+	Iron->SetScalarParameterValue(TEXT("Metallic"), 0.9f);
+	Iron->SetScalarParameterValue(TEXT("Roughness"), 0.45f);
+	Iron->SetScalarParameterValue(TEXT("Glow"), 0.f);
+	UMaterialInstanceDynamic* Embers = UMaterialInstanceDynamic::Create(Shape, this);
+	Embers->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.3f, 0.05f));
+	Embers->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+	Embers->SetScalarParameterValue(TEXT("Roughness"), 1.f);
+	Embers->SetScalarParameterValue(TEXT("Glow"), 3.f);
+
+	// Clear of the gate (90 degrees) and of the four collapsed wall sections.
+	for (const float Angle : { 0.f, 55.f, 125.f, 180.f, 250.f, 290.f })
+	{
+		FVector Ground;
+		if (!ArenaLayout::FindGround(World, ArenaLayout::OnWall(Angle, 0.8f), Ground))
+		{
+			continue;
+		}
+
+		AActor* Brazier = World.SpawnActor<AActor>(AActor::StaticClass(), FTransform(Ground));
+		if (!Brazier)
+		{
+			continue;
+		}
+		USceneComponent* Root = NewObject<USceneComponent>(Brazier, TEXT("Root"));
+		Root->SetMobility(EComponentMobility::Static);
+		Brazier->SetRootComponent(Root);
+		Root->SetWorldLocation(Ground);
+		Root->RegisterComponent();
+
+		// Size is the box the mesh is stretched into; Bottom is how high its base sits.
+		auto Part = [&](UStaticMesh* Mesh, const FVector& Size, float Bottom, UMaterialInterface* Material, bool bSolid)
+		{
+			const FBox Box = Mesh->GetBoundingBox();
+			const FVector Scale = Size / Box.GetSize();
+			UStaticMeshComponent* Piece = NewObject<UStaticMeshComponent>(Brazier);
+			Piece->SetMobility(EComponentMobility::Static);
+			Piece->SetStaticMesh(Mesh);
+			Piece->SetupAttachment(Root);
+			Piece->SetRelativeScale3D(Scale);
+			Piece->SetRelativeLocation(FVector(0.f, 0.f, Bottom + 0.5f * Size.Z) - Box.GetCenter() * Scale);
+			if (Material)
+			{
+				Piece->SetMaterial(0, Material);
+			}
+			Piece->SetCanEverAffectNavigation(false);
+			Piece->SetCastShadow(Material != Embers);
+			if (bSolid)
+			{
+				Piece->SetCollisionProfileName(TEXT("BlockAll"));
+			}
+			else
+			{
+				Piece->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+			Piece->RegisterComponent();
+		};
+
+		Part(Pedestal, FVector(75.f, 75.f, 100.f), -10.f, nullptr, true); // stone, weathered with the rest
+		Part(Cylinder, FVector(95.f, 95.f, 26.f), 88.f, Iron, true);       // iron bowl
+		Part(Cylinder, FVector(78.f, 78.f, 6.f), 112.f, Embers, false);    // glowing coals
+
+		AFireFX::Spawn(&World, Ground + FVector(0.f, 0.f, 116.f), AFireFX::TorchPreset(28.f));
+	}
 }
 
 void UArenaDressingSubsystem::PlantGrass(UWorld& World)
@@ -606,11 +728,14 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 			for (int32 Slot = 0; Slot < Component->GetNumMaterials(); ++Slot)
 			{
 				UMaterialInterface* Material = Component->GetMaterial(Slot);
+				UMaterialInterface* Source = Material;
 				const UMaterial* Base = Material ? Material->GetBaseMaterial() : nullptr;
-				// One stone for everything: columns and rubble (limestone) switch to the colosseum's stone.
-				if (Base && Base->GetName() == TEXT("M_RomanColumn") && ColosseumStone)
+				// One stone material for everything: columns and rubble (limestone) switch to the colosseum's
+				// stone, with cracked sandstone instead of its blocks.
+				const bool bRuinStone = Base && Base->GetName() == TEXT("M_RomanColumn") && ColosseumStone;
+				if (bRuinStone)
 				{
-					Material = ColosseumStone;
+					Source = ColosseumStone;
 					Base = ColosseumStone->GetBaseMaterial();
 				}
 				const FLook* Look = nullptr;
@@ -626,13 +751,14 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 					continue;
 				}
 
-				UMaterialInstanceDynamic* Dynamic = Cast<UMaterialInstanceDynamic>(Material);
+				UMaterialInstanceDynamic* Dynamic = Cast<UMaterialInstanceDynamic>(Source);
 				if (!Dynamic)
 				{
+					// Keyed by the original, so ruin stone gets its own copy of the colosseum stone.
 					TObjectPtr<UMaterialInstanceDynamic>& Shared = Weathered.FindOrAdd(Material);
 					if (!Shared)
 					{
-						Shared = UMaterialInstanceDynamic::Create(Material, this);
+						Shared = UMaterialInstanceDynamic::Create(Source, this);
 					}
 					Dynamic = Shared;
 					Component->SetMaterial(Slot, Dynamic);
@@ -644,6 +770,12 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 					// Less sand drifted onto ledges, deeper cracks.
 					Dynamic->SetScalarParameterValue(TEXT("SandOnFloors"), 0.4f);
 					Dynamic->SetScalarParameterValue(TEXT("NormalStrength"), 1.6f);
+					ArenaLayout::UseTextures(Dynamic, TEXT("Stone"), bRuinStone ? TEXT("CrackedSandstone") : TEXT("SandstoneBlocks"));
+					ArenaLayout::UseTextures(Dynamic, TEXT("Sand"), TEXT("DesertSand"));
+				}
+				else if (Base->GetName() == TEXT("M_Dunes"))
+				{
+					ArenaLayout::UseTextures(Dynamic, TEXT("Sand"), TEXT("DesertSand"));
 				}
 			}
 		}
@@ -678,7 +810,7 @@ void UArenaDressingSubsystem::ColorGrade(UWorld& World)
 	Settings.bOverride_ColorOffsetShadows = true;
 	Settings.ColorOffsetShadows = FVector4(-0.004f, 0.f, 0.008f, 0.f);
 	Settings.bOverride_AutoExposureBias = true;
-	Settings.AutoExposureBias = -0.15f;
+	Settings.AutoExposureBias = 0.1f;
 	Settings.bOverride_VignetteIntensity = true;
 	Settings.VignetteIntensity = 0.65f;
 	Settings.bOverride_FilmGrainIntensity = true;

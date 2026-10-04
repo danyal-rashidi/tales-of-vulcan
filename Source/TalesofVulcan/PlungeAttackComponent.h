@@ -80,9 +80,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Plunge")
 	float CameraShakeScale = 1.f;
 
-	/** Draws the impact sphere (green = hit something, red = missed). Turn off for the demo. */
+	/** Draws the impact sphere (green = hit something, red = missed). Turn on while tuning. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Plunge")
-	bool bShowDebug = true;
+	bool bShowDebug = false;
 
 	/** Hook up a whoosh sound here. */
 	UPROPERTY(BlueprintAssignable, Category="Plunge")
