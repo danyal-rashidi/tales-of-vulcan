@@ -14,6 +14,7 @@
  *               -GripFront=0.4 -GripRoll=0 -GripFlip -GripSwapHands
  * -EnvShot      films the arena (overview, ground level, grass close-up, wall) for checking fog/grass/floor.
  * -FireShot     spawns each FireFX preset next to the player and films it.
+ * -BossShot     starts the fight and films Vulcan (wake-up roar, attacks, flinches from a few hits, death).
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
@@ -29,6 +30,7 @@ private:
 	void StartSpearShot();
 	void StartEnvShot();
 	void StartFireShot();
+	void StartBossShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);

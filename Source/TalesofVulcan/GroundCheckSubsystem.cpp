@@ -3,7 +3,9 @@
 #include "HipRootMotionComponent.h"
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
+#include "VulcanBoss.h"
 #include "Animation/AnimMontage.h"
+#include "GameFramework/DamageType.h"
 #include "Camera/CameraActor.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -24,7 +26,8 @@ bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
 	const TCHAR* CommandLine = FCommandLine::Get();
 	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
-		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot")))
+		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
+		|| FParse::Param(CommandLine, TEXT("BossShot")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -50,6 +53,10 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("FireShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartFireShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("BossShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossShot, 2.f, false);
 	}
 	else
 	{
@@ -89,6 +96,51 @@ void UGroundCheckSubsystem::StartEnvShot()
 	After(3.2f, [this, Center]() { ShootFrom(Center + FVector(-500.f, 0.f, 250.f), Center + FVector(3300.f, 0.f, 300.f)); });
 	After(3.6f, [this]() { Shot(TEXT("env_wall")); });
 	After(4.0f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartBossShot()
+{
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> It(World);
+	AVulcanBoss* Boss = It ? *It : nullptr;
+	if (!Boss)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+
+	TWeakObjectPtr<AVulcanBoss> WeakBoss = Boss;
+	Boss->StartFight();
+
+	// A shot every 0.6 s, framed on Vulcan from a fixed angle.
+	for (int32 i = 0; i < 55; ++i)
+	{
+		After(0.3f + i * 0.6f, [this, WeakBoss, i]()
+		{
+			if (AVulcanBoss* B = WeakBoss.Get())
+			{
+				const FVector Target = B->GetActorLocation() + FVector(0.f, 0.f, 60.f);
+				ShootFrom(Target + FVector(700.f, 450.f, 260.f), Target);
+			}
+			Shot(FString::Printf(TEXT("boss_%02d"), i));
+		});
+	}
+
+	// A few hits between attacks to see the flinch, then the death.
+	auto Hit = [WeakBoss, World](float Amount)
+	{
+		if (AVulcanBoss* B = WeakBoss.Get())
+		{
+			UGameplayStatics::ApplyDamage(B, Amount, UGameplayStatics::GetPlayerController(World, 0),
+				UGameplayStatics::GetPlayerPawn(World, 0), UDamageType::StaticClass());
+		}
+	};
+	for (const float Time : { 14.f, 17.f, 20.f, 23.f })
+	{
+		After(Time, [Hit]() { Hit(5.f); });
+	}
+	After(28.f, [Hit]() { Hit(100000.f); });
+	After(33.5f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartFireShot()
