@@ -2,6 +2,7 @@
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
 #include "DodgeComponent.h"
+#include "PlungeAttackComponent.h"
 #include "Animation/AnimMontage.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/OverlapResult.h"
@@ -46,6 +47,14 @@ bool UMeleeAttackComponent::TryAttack()
 	if (const UDodgeComponent* Dodge = Character->FindComponentByClass<UDodgeComponent>())
 	{
 		if (Dodge->IsDodging())
+		{
+			return false;
+		}
+	}
+
+	if (const UPlungeAttackComponent* Plunge = Character->FindComponentByClass<UPlungeAttackComponent>())
+	{
+		if (Plunge->IsPlunging())
 		{
 			return false;
 		}
