@@ -1,6 +1,7 @@
 #include "DodgeComponent.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
+#include "PlungeAttackComponent.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -30,6 +31,14 @@ bool UDodgeComponent::TryDodge()
 	if (Health && Health->IsDead())
 	{
 		return false;
+	}
+
+	if (const UPlungeAttackComponent* Plunge = Character->FindComponentByClass<UPlungeAttackComponent>())
+	{
+		if (Plunge->IsPlunging())
+		{
+			return false;
+		}
 	}
 
 	if (UStaminaComponent* Stamina = Character->FindComponentByClass<UStaminaComponent>())

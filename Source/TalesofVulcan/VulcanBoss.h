@@ -5,6 +5,7 @@
 #include "VulcanBoss.generated.h"
 
 class UAnimMontage;
+class UAnimSequenceBase;
 class UHealthComponent;
 class UMaterialInstanceDynamic;
 class UPointLightComponent;
@@ -265,6 +266,41 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
 	TObjectPtr<UAnimMontage> DeathMontage;
+
+	// ---------------------------------------------------------------- Animations
+	// Mixamo animations retargeted to the mannequin (RTG_* assets). At BeginPlay each one
+	// is turned into a montage for any montage slot that is still empty, so no montage assets are needed.
+
+	/** Fight-start roar and Molten Breath. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> RoarAnimation;
+
+	/** Magma Dive take-off. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> JumpAnimation;
+
+	/** Magma Dive landing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> LandAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> HitReactAnimation;
+
+	/** Holds its last frame (lies on the ground). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> DeathAnimation;
+
+	/** Played when the statue comes alive; Vulcan stands still for it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimMontage> RoarMontage;
+
+	/** Flinch when the player lands a hit between attacks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimMontage> HitReactMontage;
+
+	/** Seconds between flinches, so a combo can't stun-lock Vulcan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	float HitReactCooldown = 1.5f;
 
 	// ---------------------------------------------------------------- Phase 2 "Eruption"
 
@@ -590,7 +626,13 @@ private:
 	UFUNCTION()
 	void HandleDeath(AActor* Killer);
 
+	/** Fills empty montage slots from the *Animation sequences. */
+	void BuildMontagesFromAnimations();
+
 	EVulcanAttack CurrentAttack = EVulcanAttack::None;
+	float LastHealth = -1.f;
+	float NextHitReactTime = 0.f;
+	FTimerHandle RoarTimer;
 	/** True when there's no nav mesh path, so Tick walks straight at the player instead. */
 	bool bDirectChase = false;
 	bool bFightActive = false;

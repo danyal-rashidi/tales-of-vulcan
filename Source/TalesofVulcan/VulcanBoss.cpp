@@ -21,6 +21,7 @@
 #include "GameFramework/DamageType.h"
 #include "DriftParticles.h"
 #include "EarthquakeCameraShake.h"
+#include "FireFX.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -111,6 +112,18 @@ AVulcanBoss::AVulcanBoss()
 	{
 		GetMesh()->SetAnimInstanceClass(StandInAnim.Class);
 	}
+
+	// Mixamo animations retargeted to the mannequin; BuildMontagesFromAnimations turns them into montages.
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Roar(TEXT("/Game/RTG_Mutant_Roaring.RTG_Mutant_Roaring"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Jump(TEXT("/Game/RTG_Mutant_Jumping.RTG_Mutant_Jumping"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Land(TEXT("/Game/Player/Animations/RTG_Hard_Landing.RTG_Hard_Landing"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> HitReact(TEXT("/Game/RTG_Zombie_Reaction_Hit.RTG_Zombie_Reaction_Hit"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Death(TEXT("/Game/RTG_Standing_React_Death_Backward.RTG_Standing_React_Death_Backward"));
+	RoarAnimation = Roar.Object;
+	JumpAnimation = Jump.Object;
+	LandAnimation = Land.Object;
+	HitReactAnimation = HitReact.Object;
+	DeathAnimation = Death.Object;
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
 	// Squash the skeleton: shorter legs and torso give the otter chunky, chibi proportions.
 	GetMesh()->SetRelativeScale3D(FVector(0.9f, 0.9f, 0.7f));
@@ -168,7 +181,13 @@ void AVulcanBoss::BeginPlay()
 {
 	Super::BeginPlay();
 
+	BuildMontagesFromAnimations();
+
 	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+
+	// The mannequin is hidden behind the otter shapes, and a hidden skeletal mesh stops refreshing its
+	// bones by default, which froze the otter in one pose. Keep animating and updating bones regardless.
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
 	HealthComponent->OnHealthChanged.AddDynamic(this, &AVulcanBoss::HandleHealthChanged);
 	HealthComponent->OnDeath.AddDynamic(this, &AVulcanBoss::HandleDeath);
@@ -636,6 +655,21 @@ void AVulcanBoss::FinishAwakening()
 
 	StartFight();
 	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.f; // a beat to react before the first attack
+
+	// Roar as the fight begins, standing still for it.
+	const float RoarTime = PlayMontageScaled(RoarMontage);
+	if (RoarTime > 0.f)
+	{
+		GetCharacterMovement()->DisableMovement();
+		NextAttackTime = GetWorld()->GetTimeSeconds() + RoarTime;
+		GetWorldTimerManager().SetTimer(RoarTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (!bDead)
+			{
+				GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+			}
+		}), RoarTime, false);
+	}
 }
 
 void AVulcanBoss::ApplyOtterLook()
@@ -1246,6 +1280,17 @@ void AVulcanBoss::BeginBreathing()
 {
 	BreathTimeRemaining = BreathDuration + (bPhaseTwo ? PhaseTwoBreathExtraDuration : 0.f);
 	OnBreathStarted();
+
+	// Visible flames from the mouth along Vulcan's facing (the damage cone in BreathTick is unchanged).
+	USceneComponent* Mouth = GetMesh();
+	if (OtterParts.IsValidIndex(OtterBody::Muzzle) && OtterParts[OtterBody::Muzzle])
+	{
+		Mouth = OtterParts[OtterBody::Muzzle];
+	}
+	AFireFX::Spawn(GetWorld(), Mouth->GetComponentLocation(),
+		AFireFX::BreathPreset(BreathRange + (bPhaseTwo ? PhaseTwoBreathExtraRange : 0.f),
+			BreathHalfAngle + (bPhaseTwo ? PhaseTwoBreathExtraHalfAngle : 0.f), BreathTimeRemaining),
+		Mouth);
 	GetWorldTimerManager().SetTimer(BreathTimer, this, &AVulcanBoss::BreathTick, FMath::Max(BreathTickInterval, 0.02f), true);
 }
 
@@ -1300,12 +1345,14 @@ void AVulcanBoss::EndBreath()
 void AVulcanBoss::StartDive()
 {
 	PlayMontageScaled(DiveMontage);
+	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(180.f, 70));
 	Schedule(AttackTimer, &AVulcanBoss::DiveSubmerge, DiveSubmergeTime / GetSpeedScale());
 }
 
 void AVulcanBoss::DiveSubmerge()
 {
 	OnDiveSubmerged(GetFeetLocation());
+	AFireFX::Spawn(GetWorld(), GetFeetLocation(), AFireFX::BurstPreset(260.f, 110));
 
 	// Disable movement before collision, otherwise Vulcan falls through the floor.
 	GetCharacterMovement()->DisableMovement();
@@ -1328,6 +1375,7 @@ void AVulcanBoss::DiveShowWarning()
 	OnDiveWarning(Ground, DiveRadius);
 
 	const float WarningTime = DiveWarningTime / GetSpeedScale();
+	AFireFX::Spawn(GetWorld(), Ground, AFireFX::EmbersPreset(DiveRadius, WarningTime));
 	if (bShowDebug)
 	{
 		DrawDebugCircle(GetWorld(), Ground + FVector(0.f, 0.f, 5.f), DiveRadius, 32, FColor::Orange, false, WarningTime, 0, 4.f, FVector(1.f, 0.f, 0.f), FVector(0.f, 1.f, 0.f), false);
@@ -1347,6 +1395,7 @@ void AVulcanBoss::DiveEmerge()
 
 	const FVector Ground = GetFeetLocation();
 	OnDiveEmerged(Ground);
+	AFireFX::Spawn(GetWorld(), Ground, AFireFX::BurstPreset(DiveRadius, 160));
 
 	if (APawn* Player = GetPlayer())
 	{
@@ -1361,6 +1410,7 @@ void AVulcanBoss::DiveEmerge()
 		BurnPatchLocation = Ground;
 		BurnPatchTimeRemaining = BurnPatchDuration;
 		OnBurnPatchStarted(Ground, DiveRadius, BurnPatchDuration);
+		AFireFX::Spawn(GetWorld(), Ground, AFireFX::GroundFirePreset(DiveRadius, BurnPatchDuration));
 		GetWorldTimerManager().SetTimer(BurnTimer, this, &AVulcanBoss::BurnPatchTick, 0.5f, true);
 	}
 
@@ -1400,6 +1450,17 @@ void AVulcanBoss::HandleHealthChanged(float NewHealth, float MaxHealth)
 	if (!bFightActive && NewHealth < MaxHealth)
 	{
 		StartFight();
+	}
+
+	// Flinch when hit between attacks (never mid-attack or mid-roar, so those always finish).
+	const bool bTookDamage = NewHealth < (LastHealth < 0.f ? MaxHealth : LastHealth);
+	LastHealth = NewHealth;
+	if (bTookDamage && HitReactMontage && bFightActive && !bDead && NewHealth > 0.f && !IsHidden()
+		&& IntroState == EIntroState::Done && CurrentAttack == EVulcanAttack::None
+		&& !GetWorldTimerManager().IsTimerActive(RoarTimer) && GetWorld()->GetTimeSeconds() >= NextHitReactTime)
+	{
+		NextHitReactTime = GetWorld()->GetTimeSeconds() + HitReactCooldown;
+		PlayMontageScaled(HitReactMontage);
 	}
 
 	if (!bPhaseTwo && NewHealth > 0.f && MaxHealth > 0.f && NewHealth / MaxHealth <= PhaseTwoHealthPercent)
@@ -1498,6 +1559,26 @@ void AVulcanBoss::DamagePlayer(float BaseAmount)
 		const float Amount = BaseAmount * (bPhaseTwo ? PhaseTwoDamageMultiplier : 1.f);
 		UGameplayStatics::ApplyDamage(Player, Amount, GetController(), this, UDamageType::StaticClass());
 	}
+}
+
+void AVulcanBoss::BuildMontagesFromAnimations()
+{
+	auto MakeMontage = [](UAnimSequenceBase* Animation, bool bHoldLastFrame = false) -> UAnimMontage*
+	{
+		UAnimMontage* Montage = Animation ? UAnimMontage::CreateSlotAnimationAsDynamicMontage(Animation, TEXT("DefaultSlot"), 0.2f, 0.3f) : nullptr;
+		if (Montage && bHoldLastFrame)
+		{
+			Montage->bEnableAutoBlendOut = false;
+		}
+		return Montage;
+	};
+
+	if (!RoarMontage)      { RoarMontage = MakeMontage(RoarAnimation); }
+	if (!BreathMontage)    { BreathMontage = MakeMontage(RoarAnimation); }
+	if (!DiveMontage)      { DiveMontage = MakeMontage(JumpAnimation); }
+	if (!EmergeMontage)    { EmergeMontage = MakeMontage(LandAnimation); }
+	if (!HitReactMontage)  { HitReactMontage = MakeMontage(HitReactAnimation); }
+	if (!DeathMontage)     { DeathMontage = MakeMontage(DeathAnimation, true); }
 }
 
 float AVulcanBoss::PlayMontageScaled(UAnimMontage* Montage)
