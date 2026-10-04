@@ -38,6 +38,12 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UWidget> Victory;
+
+	/** Boss music: starts when Vulcan wakes, fades out when he dies. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UAudioComponent> Music;
+
+	bool bVictoryToll = false;
 };
 
 /** Puts the boss HUD on the player's screen at the start of play. */

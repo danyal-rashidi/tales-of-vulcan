@@ -48,6 +48,12 @@ private:
 	UFUNCTION()
 	void HandleDeath(AActor* Killer);
 
+	/** Grunt-thump when the player takes damage (rate-limited, the breath hits ten times a second). */
+	UFUNCTION()
+	void HandleHealthChanged(float NewHealth, float MaxHealth);
+
 	bool bDead = false;
+	float LastHealth = -1.f;
+	float NextHurtSoundTime = 0.f;
 	FTimerHandle RestartTimer;
 };

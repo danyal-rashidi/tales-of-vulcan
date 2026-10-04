@@ -6,6 +6,7 @@
 
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UAudioComponent;
 class UPointLightComponent;
 
 /** How a fire effect emits flames. Use the presets on AFireFX. */
@@ -47,6 +48,9 @@ struct FFireSettings
 	/** Flickering orange light. 0 = no light. */
 	float LightIntensity = 0.f;
 	float LightRadius = 900.f;
+	/** Crackling fire loop (S_FireLoop). 0 = silent. */
+	float SoundVolume = 0.f;
+	float SoundRange = 2500.f;
 	/** Breath: the effect follows a component and fires along its owner's forward, tilted down by this much. */
 	float FollowPitchDegrees = -8.f;
 };
@@ -109,6 +113,9 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UPointLightComponent> Light;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> Audio;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BandMaterials[3];

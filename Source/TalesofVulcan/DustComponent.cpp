@@ -1,5 +1,6 @@
 #include "DustComponent.h"
 #include "DodgeComponent.h"
+#include "GameAudio.h"
 #include "FireFX.h"
 #include "PlungeAttackComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -57,6 +58,15 @@ void UDustComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorC
 		bLeftFoot = !bLeftFoot;
 		const FVector Side = Character->GetActorRightVector() * Character->GetCapsuleComponent()->GetScaledCapsuleRadius() * (bLeftFoot ? -0.4f : 0.4f);
 		Puff(GetFeet() + Side, 50.f, 5);
+		// The player's steps crunch softly; Vulcan stomps.
+		if (Character->IsPlayerControlled())
+		{
+			GameAudio::Play(this, TEXT("Footstep"), GetFeet(), 0.35f, 1.f, 2000.f);
+		}
+		else
+		{
+			GameAudio::Play(this, TEXT("Thud"), GetFeet(), 0.6f, 0.5f, 5000.f);
+		}
 	}
 }
 
@@ -74,6 +84,7 @@ void UDustComponent::Puff(const FVector& Location, float Radius, int32 Count) co
 void UDustComponent::HandleLanded(const FHitResult& Hit)
 {
 	Puff(GetFeet(), 80.f, 12);
+	GameAudio::Play(this, TEXT("Thud"), GetFeet(), 0.5f * Scale, 1.1f / FMath::Max(Scale, 1.f), 3000.f);
 }
 
 void UDustComponent::HandleDodge()
