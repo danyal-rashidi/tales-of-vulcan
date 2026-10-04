@@ -3,6 +3,7 @@
 #include "HealthComponent.h"
 #include "DodgeComponent.h"
 #include "PlungeAttackComponent.h"
+#include "SpearGripComponent.h"
 #include "Animation/AnimMontage.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/OverlapResult.h"
@@ -136,7 +137,21 @@ void UMeleeAttackComponent::DoHit()
 		return;
 	}
 
-	const FVector Center = Character->GetActorLocation() + Character->GetActorForwardVector() * HitDistance;
+	// Default hit shape: a sphere HitDistance in front of the owner.
+	FVector Center = Character->GetActorLocation() + Character->GetActorForwardVector() * HitDistance;
+	FQuat ShapeRotation = FQuat::Identity;
+	FCollisionShape Shape = FCollisionShape::MakeSphere(HitRadius);
+
+	// With a spear in hand, hit wherever its front two thirds actually are on this frame.
+	FVector SpearBack, SpearTip;
+	const USpearGripComponent* Grip = bHitAlongWeapon ? Character->FindComponentByClass<USpearGripComponent>() : nullptr;
+	if (Grip && Grip->GetSpearSegment(SpearBack, SpearTip))
+	{
+		const FVector Start = FMath::Lerp(SpearBack, SpearTip, 0.35f);
+		Center = (Start + SpearTip) * 0.5f;
+		ShapeRotation = FRotationMatrix::MakeFromZ(SpearTip - Start).ToQuat();
+		Shape = FCollisionShape::MakeCapsule(HitRadius, 0.5f * FVector::Dist(Start, SpearTip) + HitRadius);
+	}
 
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(Character);
@@ -145,9 +160,9 @@ void UMeleeAttackComponent::DoHit()
 	World->OverlapMultiByObjectType(
 		Overlaps,
 		Center,
-		FQuat::Identity,
+		ShapeRotation,
 		FCollisionObjectQueryParams(ECC_Pawn),
-		FCollisionShape::MakeSphere(HitRadius),
+		Shape,
 		Params);
 
 	// An actor can have several overlapping parts; only damage it once per swing.
@@ -167,7 +182,15 @@ void UMeleeAttackComponent::DoHit()
 
 	if (bShowDebug)
 	{
-		DrawDebugSphere(World, Center, HitRadius, 16, AlreadyHit.Num() > 0 ? FColor::Green : FColor::Red, false, 0.4f);
+		const FColor Color = AlreadyHit.Num() > 0 ? FColor::Green : FColor::Red;
+		if (Shape.IsCapsule())
+		{
+			DrawDebugCapsule(World, Center, Shape.GetCapsuleHalfHeight(), HitRadius, ShapeRotation, Color, false, 0.4f);
+		}
+		else
+		{
+			DrawDebugSphere(World, Center, HitRadius, 16, Color, false, 0.4f);
+		}
 	}
 
 	// Line up the next swing if the montage has more than one Hit notify.

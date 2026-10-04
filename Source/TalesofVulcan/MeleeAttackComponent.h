@@ -54,6 +54,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack")
 	float HitRadius = 90.f;
 
+	/**
+	 * If the owner has a SpearGripComponent, the hit follows the spear on the Hit frame
+	 * (its front two thirds, HitRadius thick) instead of a sphere HitDistance in front.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack")
+	bool bHitAlongWeapon = true;
+
 	/** Walk speed while swinging. 0 = plant your feet like in Souls games. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack")
 	float MoveSpeedWhileAttacking = 0.f;
