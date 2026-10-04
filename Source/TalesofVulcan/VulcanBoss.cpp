@@ -5,20 +5,81 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
+namespace OtterBody
+{
+	enum EPart : int32
+	{
+		Torso, BellyPatch, Head, Muzzle, Nose,
+		EyeL, EyeR, ShineL, ShineR, BrowDotL, BrowDotR,
+		EarL, EarR, InnerEarL, InnerEarR,
+		WhiskerL0, WhiskerL1, WhiskerL2, WhiskerR0, WhiskerR1, WhiskerR2,
+		FrameL, FrameR, LensL, LensR, Bridge,
+		UpperArmL, LowerArmL, HandL, UpperArmR, LowerArmR, HandR,
+		ThighL, CalfL, FootL, ThighR, CalfR, FootR,
+		Tail0, Tail1, Tail2,
+		// Obsidian spikes (cones): back ridge, head "volcano peaks", tail
+		SpikeBack0, SpikeBack1, SpikeBack2, SpikeBack3,
+		SpikeHead0, SpikeHead1, SpikeHead2,
+		SpikeTail0, SpikeTail1,
+		Count
+	};
+
+	enum EColorSlot : int32 { Fur, Lava, Obsidian, Eye, Lens, MuzzleTone, SlotCount };
+
+	const TCHAR* const Names[Count] =
+	{
+		TEXT("Torso"), TEXT("BellyPatch"), TEXT("Head"), TEXT("Muzzle"), TEXT("Nose"),
+		TEXT("EyeL"), TEXT("EyeR"), TEXT("ShineL"), TEXT("ShineR"), TEXT("BrowDotL"), TEXT("BrowDotR"),
+		TEXT("EarL"), TEXT("EarR"), TEXT("InnerEarL"), TEXT("InnerEarR"),
+		TEXT("WhiskerL0"), TEXT("WhiskerL1"), TEXT("WhiskerL2"), TEXT("WhiskerR0"), TEXT("WhiskerR1"), TEXT("WhiskerR2"),
+		TEXT("FrameL"), TEXT("FrameR"), TEXT("LensL"), TEXT("LensR"), TEXT("Bridge"),
+		TEXT("UpperArmL"), TEXT("LowerArmL"), TEXT("HandL"), TEXT("UpperArmR"), TEXT("LowerArmR"), TEXT("HandR"),
+		TEXT("ThighL"), TEXT("CalfL"), TEXT("FootL"), TEXT("ThighR"), TEXT("CalfR"), TEXT("FootR"),
+		TEXT("Tail0"), TEXT("Tail1"), TEXT("Tail2"),
+		TEXT("SpikeBack0"), TEXT("SpikeBack1"), TEXT("SpikeBack2"), TEXT("SpikeBack3"),
+		TEXT("SpikeHead0"), TEXT("SpikeHead1"), TEXT("SpikeHead2"),
+		TEXT("SpikeTail0"), TEXT("SpikeTail1")
+	};
+
+	const EColorSlot Colors[Count] =
+	{
+		Fur, Lava, Fur, MuzzleTone, Obsidian,
+		Eye, Eye, Lens, Lens, MuzzleTone, MuzzleTone,
+		Fur, Fur, MuzzleTone, MuzzleTone,
+		Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian,
+		Obsidian, Obsidian, Lens, Lens, Obsidian,
+		Fur, Fur, Fur, Fur, Fur, Fur,
+		Fur, Fur, Fur, Fur, Fur, Fur,
+		Fur, Fur, Fur,
+		Obsidian, Obsidian, Obsidian, Obsidian,
+		Obsidian, Obsidian, Obsidian,
+		Obsidian, Obsidian
+	};
+
+	bool IsSpike(int32 Part) { return Part >= SpikeBack0 && Part < Count; }
+	bool IsGlasses(int32 Part) { return Part >= FrameL && Part <= Bridge; }
+}
+
 AVulcanBoss::AVulcanBoss()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	// Run after animation so the otter shapes follow this frame's pose.
+	PrimaryActorTick.TickGroup = TG_PostUpdateWork;
 
 	// Stand-in body until the otter exists: the template mannequin. Override in BP_Vulcan.
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> StandInMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
@@ -35,6 +96,39 @@ AVulcanBoss::AVulcanBoss()
 
 	// Boss-sized, and easy to tell apart from the player mannequin.
 	GetCapsuleComponent()->SetRelativeScale3D(FVector(1.6f));
+
+	// Cartoon otter made of stretched spheres + cone spikes; positioned on the mannequin's bones every frame.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> BlobMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SpikeMesh(TEXT("/Engine/BasicShapes/Cone.Cone"));
+	for (int32 i = 0; i < OtterBody::Count; ++i)
+	{
+		UStaticMeshComponent* Part = CreateDefaultSubobject<UStaticMeshComponent>(FName(FString(TEXT("Otter_")) + OtterBody::Names[i]));
+		Part->SetupAttachment(GetMesh());
+		Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Part->SetGenerateOverlapEvents(false);
+		Part->SetCanEverAffectNavigation(false);
+
+		const auto& ShapeMesh = OtterBody::IsSpike(i) ? SpikeMesh : BlobMesh;
+		if (ShapeMesh.Succeeded())
+		{
+			Part->SetStaticMesh(ShapeMesh.Object);
+		}
+		OtterParts.Add(Part);
+	}
+
+	StatueMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StatueMesh"));
+	StatueMesh->SetupAttachment(GetCapsuleComponent());
+	StatueMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StatueMesh->SetCanEverAffectNavigation(false);
+	StatueMesh->SetRelativeLocation(FVector(0.f, 0.f, -90.f)); // feet at the bottom of the capsule
+
+	CoreGlow = CreateDefaultSubobject<UPointLightComponent>(TEXT("Otter_CoreGlow"));
+	CoreGlow->SetupAttachment(GetMesh());
+	CoreGlow->SetIntensityUnits(ELightUnits::Candelas);
+	CoreGlow->SetIntensity(CoreGlowIntensity);
+	CoreGlow->SetLightColor(FLinearColor(1.f, 0.35f, 0.05f));
+	CoreGlow->SetAttenuationRadius(500.f);
+	CoreGlow->SetCastShadows(false);
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
 	HealthComponent->MaxHealth = 500.f;
@@ -58,7 +152,18 @@ void AVulcanBoss::BeginPlay()
 	HealthComponent->OnHealthChanged.AddDynamic(this, &AVulcanBoss::HandleHealthChanged);
 	HealthComponent->OnDeath.AddDynamic(this, &AVulcanBoss::HandleDeath);
 
-	if (bStartFightOnBeginPlay)
+	MeshRestLocation = GetMesh()->GetRelativeLocation();
+	StatueRestLocation = StatueMesh->GetRelativeLocation();
+
+	if (bStatueIntro)
+	{
+		// Statue until the player comes close (see Think). Let the idle pose settle, then freeze it.
+		IntroState = EIntroState::Statue;
+		HealthComponent->bInvulnerable = true;
+		ApplyOtterLook();
+		GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FreezeStatuePose, 0.2f, false);
+	}
+	else if (bStartFightOnBeginPlay)
 	{
 		StartFight();
 	}
@@ -66,9 +171,347 @@ void AVulcanBoss::BeginPlay()
 	GetWorldTimerManager().SetTimer(ThinkTimer, this, &AVulcanBoss::Think, FMath::Max(ThinkInterval, 0.05f), true);
 }
 
+void AVulcanBoss::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	// Show the statue look in the editor too, so the sculpture model can be lined up.
+	IntroState = bStatueIntro ? EIntroState::Statue : EIntroState::Done;
+
+	ApplyOtterLook();
+	UpdateOtterBody();
+}
+
+// ============================================================ Otter body
+
+bool AVulcanBoss::HasStatueModel() const
+{
+	return StatueMesh && StatueMesh->GetStaticMesh() != nullptr;
+}
+
+void AVulcanBoss::FreezeStatuePose()
+{
+	if (IntroState == EIntroState::Statue)
+	{
+		GetMesh()->bPauseAnims = true;
+	}
+}
+
+void AVulcanBoss::AwakenFromStatue()
+{
+	if (IntroState != EIntroState::Statue)
+	{
+		return;
+	}
+
+	IntroState = EIntroState::Awakening;
+	OnStatueAwakening();
+
+	if (bShowDebug && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, StatueAwakenTime, FColor::Orange, TEXT("The statue begins to crack..."));
+	}
+
+	GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FinishAwakening, FMath::Max(StatueAwakenTime, 0.05f), false);
+}
+
+void AVulcanBoss::FinishAwakening()
+{
+	IntroState = EIntroState::Done;
+
+	GetMesh()->bPauseAnims = false;
+	GetMesh()->SetRelativeLocation(MeshRestLocation);
+	StatueMesh->SetRelativeLocation(StatueRestLocation);
+	HealthComponent->bInvulnerable = false;
+
+	ApplyOtterLook();
+	OnStatueTransformed();
+
+	StartFight();
+	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.f; // a beat to react before the first attack
+}
+
+void AVulcanBoss::ApplyOtterLook()
+{
+	const bool bStatue = IntroState != EIntroState::Done;
+	const bool bStatueModel = bStatue && HasStatueModel();
+	const bool bShowOtter = bUseOtterBody && !bStatueModel;
+
+	StatueMesh->SetVisibility(bStatueModel);
+	GetMesh()->SetVisibility(!bUseOtterBody && !bStatueModel, false);
+
+	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+
+	// When Vulcan dies the lava cools to black rock. As a statue, everything is bronze.
+	const FLinearColor CooledLava = FLinearColor(FColor(30, 26, 26));
+	const FLinearColor DarkBronze = BronzeColor * 0.55f;
+	const FLinearColor SlotColors[OtterBody::SlotCount] =
+	{
+		bStatue ? BronzeColor : FurColor,
+		bStatue ? BronzeColor : (bDead ? CooledLava : LavaColor),
+		bStatue ? DarkBronze : ObsidianColor,
+		bStatue ? DarkBronze : EyeColor,
+		bStatue ? BronzeColor : LensColor,
+		bStatue ? BronzeColor : MuzzleColor
+	};
+
+	OtterMaterials.SetNum(OtterBody::SlotCount);
+	for (int32 Slot = 0; Slot < OtterBody::SlotCount; ++Slot)
+	{
+		if (!OtterMaterials[Slot] && BaseMaterial)
+		{
+			OtterMaterials[Slot] = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+		}
+		if (OtterMaterials[Slot])
+		{
+			OtterMaterials[Slot]->SetVectorParameterValue(TEXT("Color"), SlotColors[Slot]);
+		}
+	}
+
+	for (int32 i = 0; i < OtterParts.Num() && i < OtterBody::Count; ++i)
+	{
+		UStaticMeshComponent* Part = OtterParts[i];
+		if (!Part)
+		{
+			continue;
+		}
+
+		Part->SetVisibility(bShowOtter && (bShowGlasses || !OtterBody::IsGlasses(i)));
+		Part->SetMaterial(0, OtterMaterials[OtterBody::Colors[i]]);
+	}
+
+	if (CoreGlow)
+	{
+		CoreGlow->SetVisibility(bShowOtter && !bDead && !bStatue);
+	}
+}
+
+void AVulcanBoss::UpdateOtterBody()
+{
+	USkeletalMeshComponent* Body = GetMesh();
+	if (!bUseOtterBody || !Body || OtterParts.Num() != OtterBody::Count)
+	{
+		return;
+	}
+	if (IntroState != EIntroState::Done && HasStatueModel())
+	{
+		return; // the sculpture is showing instead
+	}
+
+	using namespace OtterBody;
+
+	const float S = Body->GetComponentScale().Z;
+	const FVector Up = FVector::UpVector;
+	const FVector Fwd = GetActorForwardVector();
+	const FVector Right = GetActorRightVector();
+
+	auto Bone = [Body](const TCHAR* Name) { return Body->GetSocketLocation(FName(Name)); };
+
+	// Engine sphere is 100 units across, so scale = size / 100. Sizes are in cm before boss scaling.
+	auto Blob = [this, S](int32 Part, const FVector& Center, const FMatrix& Axes, const FVector& SizeCm)
+	{
+		OtterParts[Part]->SetWorldTransform(FTransform(Axes.Rotator(), Center, SizeCm * S / 100.f));
+	};
+
+	// Stretched sphere running from A to B, like a sausage.
+	auto Limb = [this, S, Fwd, Up](int32 Part, const FVector& A, const FVector& B, float RadiusCm)
+	{
+		const FVector Dir = B - A;
+		const float Length = Dir.Size();
+		const FVector Along = Length > KINDA_SMALL_NUMBER ? Dir / Length : Up;
+		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
+		const float Diameter = RadiusCm * 2.f * S;
+		const FVector Scale = FVector(Diameter, Diameter, Length + Diameter * 0.8f) / 100.f;
+		OtterParts[Part]->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), (A + B) * 0.5f, Scale));
+	};
+
+	// Cone with its tip pointing along Direction. Engine cone is 100 tall and 100 wide, pivot at its center.
+	auto Spike = [this, S, Fwd, Up](int32 Part, const FVector& Base, const FVector& Direction, float LengthCm, float WidthCm)
+	{
+		const FVector Along = Direction.GetSafeNormal();
+		const FVector Secondary = FMath::Abs(FVector::DotProduct(Along, Fwd)) > 0.95f ? Up : Fwd;
+		const FVector Center = Base + Along * LengthCm * 0.5f * S;
+		OtterParts[Part]->SetWorldTransform(FTransform(FRotationMatrix::MakeFromZX(Along, Secondary).Rotator(), Center, FVector(WidthCm, WidthCm, LengthCm) * S / 100.f));
+	};
+
+	// ---- Torso: pear-shaped, molten lava belly in front
+	const FVector Pelvis = Bone(TEXT("pelvis"));
+	const FVector Spine = Bone(TEXT("spine_03"));
+	const FVector NeckBone = Bone(TEXT("neck_01"));
+	const FVector HeadBone = Bone(TEXT("head"));
+
+	// One smooth body from below the hips up into the head (torso, chest and neck in one piece).
+	const FVector TorsoAxis = (NeckBone - Pelvis).GetSafeNormal();
+	const FMatrix TorsoAxes = FRotationMatrix::MakeFromZX(TorsoAxis.IsNearlyZero() ? Up : TorsoAxis, Fwd);
+	const float TorsoSpan = FVector::Dist(Pelvis, NeckBone);
+	const FVector TorsoCenter = FMath::Lerp(Pelvis, NeckBone, 0.45f);
+	const float TorsoDepthCm = 40.f;
+	const float TorsoHalfLength = (TorsoSpan + 35.f * S) * 0.5f;
+
+	OtterParts[Torso]->SetWorldTransform(FTransform(TorsoAxes.Rotator(), TorsoCenter,
+		FVector(TorsoDepthCm * S, 44.f * S, TorsoHalfLength * 2.f) / 100.f));
+	Blob(BellyPatch, FMath::Lerp(Pelvis, NeckBone, 0.3f) + TorsoAxes.GetScaledAxis(EAxis::X) * 12.f * S, TorsoAxes, FVector(22.f, 34.f, 46.f));
+
+	// How far the back surface is from the spine at a point along the torso (it's an ellipsoid).
+	auto TorsoBackDepth = [&](const FVector& Point)
+	{
+		const float AlongAxis = FVector::DotProduct(Point - TorsoCenter, TorsoAxes.GetScaledAxis(EAxis::Z));
+		const float Fraction = FMath::Clamp(AlongAxis / TorsoHalfLength, -1.f, 1.f);
+		return TorsoDepthCm * 0.5f * S * FMath::Sqrt(1.f - Fraction * Fraction);
+	};
+
+	// ---- Head: round, snout, lava mouth, round glasses with calm dot eyes behind them
+	const FMatrix HeadAxes = FRotationMatrix::MakeFromZX(HeadBone - NeckBone, Fwd);
+	const FVector HF = HeadAxes.GetScaledAxis(EAxis::X);
+	const FVector HR = HeadAxes.GetScaledAxis(EAxis::Y);
+	const FVector HU = HeadAxes.GetScaledAxis(EAxis::Z);
+	// Big chibi head (radii 22 deep, 25 wide, 21 tall), wide cream muzzle wrapping the cheeks.
+	const FVector HeadRadii(22.f, 25.f, 21.f);
+	const FVector HeadCenter = HeadBone + (HU * 15.f + HF * 2.f) * S;
+	const FVector MuzzleCenter = HeadCenter + (HF * 10.f - HU * 9.f) * S;
+
+	// Distance from head center to the face surface at a given sideways/up offset (cm).
+	auto FaceDepth = [&HeadRadii](float SideCm, float UpCm)
+	{
+		const float Inside = 1.f - FMath::Square(SideCm / HeadRadii.Y) - FMath::Square(UpCm / HeadRadii.Z);
+		return HeadRadii.X * FMath::Sqrt(FMath::Max(Inside, 0.f));
+	};
+	auto OnFace = [&](float SideCm, float UpCm, float OutCm)
+	{
+		return HeadCenter + (HR * SideCm + HU * UpCm + HF * (FaceDepth(SideCm, UpCm) + OutCm)) * S;
+	};
+
+	Blob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
+	Blob(Muzzle, MuzzleCenter, HeadAxes, FVector(30.f, 44.f, 24.f));
+	Blob(Nose, MuzzleCenter + (HF * 14.2f + HU * 5.f) * S, HeadAxes, FVector(5.f, 7.f, 4.5f));
+	Blob(Bridge, OnFace(0.f, 1.f, 0.8f), HeadAxes, FVector(1.5f, 5.f, 1.4f));
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const float Sign = Side == 0 ? -1.f : 1.f; // left side is -Right
+
+		// Big glossy eyes with a white catchlight; round glasses around them.
+		const float EyeOut = bShowGlasses ? 1.6f : 0.3f;
+		const FVector EyeCenter = OnFace(10.f * Sign, 1.f, EyeOut);
+		Blob(Side == 0 ? FrameL : FrameR, OnFace(10.f * Sign, 1.f, 0.6f), HeadAxes, FVector(1.f, 16.f, 16.f));
+		Blob(Side == 0 ? LensL : LensR, OnFace(10.f * Sign, 1.f, 1.0f), HeadAxes, FVector(1.f, 13.f, 13.f));
+		Blob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(3.f, 8.f, 10.f));
+		Blob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 1.4f + HU * 2.5f - HR * 1.5f) * S, HeadAxes, FVector(1.f, 2.2f, 2.6f));
+
+		// Little eyebrow dots.
+		Blob(Side == 0 ? BrowDotL : BrowDotR, OnFace(9.f * Sign, 9.f, 0.2f), HeadAxes, FVector(1.5f, 3.6f, 2.2f));
+
+		// Round ears with a light inside.
+		const FVector EarCenter = HeadCenter + (HR * 16.f * Sign + HU * 14.f - HF * 2.f) * S;
+		Blob(Side == 0 ? EarL : EarR, EarCenter, HeadAxes, FVector(7.f, 12.f, 12.f));
+		Blob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 3.f * S, HeadAxes, FVector(2.f, 7.f, 7.f));
+
+		// Three whiskers fanning out from each cheek.
+		for (int32 k = 0; k < 3; ++k)
+		{
+			const FVector Root = MuzzleCenter + (HR * 16.f * Sign + HF * 9.f + HU * (1.f - k * 2.5f)) * S;
+			const FVector Tip = Root + (HR * 14.f * Sign - HF * 1.f + HU * (3.f - k * 3.f)) * S;
+			Limb((Side == 0 ? WhiskerL0 : WhiskerR0) + k, Root, Tip, 0.35f);
+		}
+	}
+
+	// ---- Arms (stubby)
+	const FVector UpperArm[2] = { Bone(TEXT("upperarm_l")), Bone(TEXT("upperarm_r")) };
+	const FVector LowerArm[2] = { Bone(TEXT("lowerarm_l")), Bone(TEXT("lowerarm_r")) };
+	const FVector Hand[2] = { Bone(TEXT("hand_l")), Bone(TEXT("hand_r")) };
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const FVector ForearmDir = (Hand[Side] - LowerArm[Side]).GetSafeNormal();
+		const FVector PawCenter = Hand[Side] + ForearmDir * 3.f * S;
+		const FMatrix PawAxes = FRotationMatrix::MakeFromZX(ForearmDir.IsNearlyZero() ? Up : ForearmDir, Fwd);
+
+		Limb(Side == 0 ? UpperArmL : UpperArmR, UpperArm[Side], LowerArm[Side], 6.f);
+		Limb(Side == 0 ? LowerArmL : LowerArmR, LowerArm[Side], Hand[Side], 5.5f);
+		Blob(Side == 0 ? HandL : HandR, PawCenter, PawAxes, FVector(10.f, 10.f, 11.f));
+	}
+
+	// ---- Legs (short and thick), flat feet
+	const FVector Thigh[2] = { Bone(TEXT("thigh_l")), Bone(TEXT("thigh_r")) };
+	const FVector Calf[2] = { Bone(TEXT("calf_l")), Bone(TEXT("calf_r")) };
+	const FVector Foot[2] = { Bone(TEXT("foot_l")), Bone(TEXT("foot_r")) };
+	const FVector Ball[2] = { Bone(TEXT("ball_l")), Bone(TEXT("ball_r")) };
+
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		Limb(Side == 0 ? ThighL : ThighR, Thigh[Side], Calf[Side], 10.f);
+		Limb(Side == 0 ? CalfL : CalfR, Calf[Side], Foot[Side], 8.f);
+
+		FVector FootDir = Ball[Side] - Foot[Side];
+		FootDir.Z = 0.f;
+		const FMatrix FootAxes = FRotationMatrix::MakeFromXZ(FootDir.IsNearlyZero() ? Fwd : FootDir, Up);
+		Blob(Side == 0 ? FootL : FootR, FMath::Lerp(Foot[Side], Ball[Side], 0.6f), FootAxes, FVector(20.f, 12.f, 8.f));
+	}
+
+	// ---- Tail: drapes to the ground behind and curls to the side. Lashes during Tail Lash.
+	const float GroundZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const bool bLashing = CurrentAttack == EVulcanAttack::TailLash;
+	const float SwayDegrees = bLashing ? FMath::Sin(OtterTime * 14.f) * 50.f : FMath::Sin(OtterTime * 2.5f) * 10.f;
+	const FQuat Sway(Up, FMath::DegreesToRadians(SwayDegrees));
+	const FVector TailRoot = Pelvis - (Fwd * 14.f + Up * 4.f) * S;
+
+	auto TailPoint = [&](float BackCm, float SideCm, float Z)
+	{
+		FVector Point = TailRoot + Sway.RotateVector(-Fwd * BackCm * S + Right * SideCm * S);
+		Point.Z = Z;
+		return Point;
+	};
+
+	const FVector T1 = TailPoint(26.f, 0.f, FMath::Lerp(TailRoot.Z, GroundZ, 0.55f));
+	const FVector T2 = TailPoint(48.f, 6.f, GroundZ + 6.f * S);
+	const FVector T3 = TailPoint(56.f, 26.f, GroundZ + 4.f * S);
+
+	Limb(Tail0, TailRoot, T1, 9.f);
+	Limb(Tail1, T1, T2, 7.f);
+	Limb(Tail2, T2, T3, 5.f);
+
+	// ---- Obsidian spikes: a ridge down the back, three volcano peaks on the head, two on the tail
+	const FVector BackLean = (-Fwd * 0.75f + Up * 0.65f);
+	const float BackT[4] = { 0.1f, 0.4f, 0.7f, 0.95f };
+	const float BackLength[4] = { 14.f, 20.f, 22.f, 16.f };
+	const float BackWidth[4] = { 9.f, 12.f, 13.f, 10.f };
+	for (int32 k = 0; k < 4; ++k)
+	{
+		const FVector OnSpine = FMath::Lerp(Pelvis, NeckBone, BackT[k]);
+		const FVector Base = OnSpine - TorsoAxes.GetScaledAxis(EAxis::X) * (TorsoBackDepth(OnSpine) - 2.f * S);
+		Spike(SpikeBack0 + k, Base, BackLean, BackLength[k], BackWidth[k]);
+	}
+
+	const float PeakSide[3] = { -6.f, 0.f, 6.f };
+	const float PeakLength[3] = { 10.f, 15.f, 10.f };
+	const float PeakWidth[3] = { 7.f, 9.f, 7.f };
+	for (int32 k = 0; k < 3; ++k)
+	{
+		const FVector Base = HeadCenter + (HU * 18.f - HF * 2.f + HR * PeakSide[k]) * S;
+		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.07f) - HF * 0.3f, PeakLength[k], PeakWidth[k]);
+	}
+
+	const FVector TailLean = Up - Sway.RotateVector(Fwd) * 0.4f;
+	Spike(SpikeTail0, FMath::Lerp(TailRoot, T1, 0.6f) + Up * 6.f * S, TailLean, 12.f, 8.f);
+	Spike(SpikeTail1, FMath::Lerp(T1, T2, 0.5f) + Up * 4.f * S, TailLean, 9.f, 6.f);
+
+	// ---- Lava glow from the chest, flickering. Brighter in phase 2.
+	if (CoreGlow)
+	{
+		const float Flicker = 0.8f + 0.15f * FMath::Sin(OtterTime * 9.f) + 0.08f * FMath::Sin(OtterTime * 23.f);
+		CoreGlow->SetWorldLocation(FMath::Lerp(Pelvis, Spine, 0.5f) + Fwd * 35.f * S);
+		CoreGlow->SetIntensity(CoreGlowIntensity * (bPhaseTwo ? 2.f : 1.f) * Flicker);
+	}
+}
+
 void AVulcanBoss::StartFight()
 {
-	if (bFightActive || bDead)
+	if (IntroState == EIntroState::Statue)
+	{
+		AwakenFromStatue(); // the fight starts once the transformation finishes
+		return;
+	}
+	if (bFightActive || bDead || IntroState == EIntroState::Awakening)
 	{
 		return;
 	}
@@ -82,6 +525,21 @@ void AVulcanBoss::StartFight()
 void AVulcanBoss::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (IntroState == EIntroState::Done)
+	{
+		OtterTime += DeltaSeconds; // statues don't sway
+	}
+	else if (IntroState == EIntroState::Awakening)
+	{
+		// Shake harder and harder until it breaks free.
+		const float Progress = 1.f - GetWorldTimerManager().GetTimerRemaining(IntroTimer) / FMath::Max(StatueAwakenTime, 0.05f);
+		const FVector Jitter = FMath::VRand() * AwakenShake * FMath::Clamp(Progress, 0.2f, 1.f);
+		GetMesh()->SetRelativeLocation(MeshRestLocation + Jitter);
+		StatueMesh->SetRelativeLocation(StatueRestLocation + Jitter);
+	}
+
+	UpdateOtterBody();
 
 	if (!bDirectChase || bDead || CurrentAttack != EVulcanAttack::None)
 	{
@@ -99,6 +557,17 @@ void AVulcanBoss::Tick(float DeltaSeconds)
 void AVulcanBoss::Think()
 {
 	bDirectChase = false;
+
+	// Statue intro: wake up when the player comes close.
+	if (IntroState == EIntroState::Statue)
+	{
+		const APawn* Player = GetPlayer();
+		if (Player && FVector::Dist2D(GetActorLocation(), Player->GetActorLocation()) <= IntroTriggerRange)
+		{
+			AwakenFromStatue();
+		}
+		return;
+	}
 
 	if (bDead || !bFightActive || CurrentAttack != EVulcanAttack::None)
 	{
@@ -513,6 +982,9 @@ void AVulcanBoss::HandleDeath(AActor* Killer)
 	StopAnimMontage();
 	PlayMontageScaled(DeathMontage);
 	GetCharacterMovement()->DisableMovement();
+
+	// Lava cools to black, eyes and core glow go out.
+	ApplyOtterLook();
 
 	OnVulcanDefeated();
 }

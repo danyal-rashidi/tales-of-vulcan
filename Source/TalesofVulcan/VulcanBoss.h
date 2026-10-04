@@ -6,6 +6,9 @@
 
 class UAnimMontage;
 class UHealthComponent;
+class UMaterialInstanceDynamic;
+class UPointLightComponent;
+class UStaticMeshComponent;
 class AVulcanProjectile;
 
 UENUM(BlueprintType)
@@ -38,6 +41,98 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Vulcan")
 	TObjectPtr<UHealthComponent> HealthComponent;
+
+	// ---------------------------------------------------------------- Otter body
+
+	/**
+	 * Builds a volcanic cartoon otter out of simple shapes that follow the mannequin's
+	 * bones (so every mannequin/Mixamo animation still works) and hides the mannequin.
+	 * Turn off when a real otter model is assigned to Mesh.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bUseOtterBody = true;
+
+	/** Cooled volcanic rock. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor FurColor = FLinearColor(FColor(70, 16, 12));
+
+	/** Belly — molten lava. Cools to black when Vulcan dies. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor LavaColor = FLinearColor(FColor(255, 80, 10));
+
+	/** Spikes, nose, glasses frames. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor ObsidianColor = FLinearColor(FColor(14, 10, 12));
+
+	/** Muzzle/cheeks, inner ears, eyebrow dots. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor MuzzleColor = FLinearColor(FColor(255, 196, 150));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor EyeColor = FLinearColor(FColor(12, 10, 10));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
+	FLinearColor LensColor = FLinearColor(FColor(222, 238, 246));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bShowGlasses = true;
+
+	/** Flickering lava light from the chest. Doubles in phase 2, goes out on death. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	float CoreGlowIntensity = 60.f;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	TArray<TObjectPtr<UStaticMeshComponent>> OtterParts;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	TObjectPtr<UPointLightComponent> CoreGlow;
+
+	// ---------------------------------------------------------------- Statue intro
+
+	/**
+	 * Vulcan starts as a bronze statue. When the player gets close it shakes, then
+	 * transforms into the lava otter and the fight begins. Invulnerable until then.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	bool bStatueIntro = true;
+
+	/**
+	 * Put a sculpture model here (Static Mesh) and line it up in the viewport.
+	 * Leave it empty and the otter itself turns to bronze instead.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Vulcan|Statue Intro")
+	TObjectPtr<UStaticMeshComponent> StatueMesh;
+
+	/** The statue awakens when the player comes this close. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float IntroTriggerRange = 1200.f;
+
+	/** Seconds of shaking between "statue notices you" and the transformation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float StatueAwakenTime = 2.5f;
+
+	/** How violently it shakes while awakening (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float AwakenShake = 4.f;
+
+	/** Used when there's no sculpture model: the otter body is tinted this. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro", meta=(HideAlphaChannel))
+	FLinearColor BronzeColor = FLinearColor(FColor(150, 95, 45));
+
+	UFUNCTION(BlueprintPure, Category="Vulcan|Statue Intro")
+	bool IsStatue() const { return IntroState != EIntroState::Done; }
+
+	/** Start the transformation now (e.g. from a cutscene trigger). */
+	UFUNCTION(BlueprintCallable, Category="Vulcan|Statue Intro")
+	void AwakenFromStatue();
+
+	/** Statue starts shaking: crack sounds, dust, camera shake. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnStatueAwakening();
+
+	/** Statue became the otter: burst of fire/smoke, roar. The fight starts right after. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnStatueTransformed();
 
 	// ---------------------------------------------------------------- General
 
@@ -277,8 +372,27 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
+	enum class EIntroState : uint8 { Statue, Awakening, Done };
+	EIntroState IntroState = EIntroState::Done;
+	FTimerHandle IntroTimer;
+	FVector MeshRestLocation = FVector::ZeroVector;
+	FVector StatueRestLocation = FVector::ZeroVector;
+
+	void FreezeStatuePose();
+	void FinishAwakening();
+	bool HasStatueModel() const;
+
+	void ApplyOtterLook();
+	void UpdateOtterBody();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> OtterMaterials;
+
+	float OtterTime = 0.f;
+
 	void Think();
 	bool TryStartAttack(float DistanceToPlayer);
 	void FinishAttack();
