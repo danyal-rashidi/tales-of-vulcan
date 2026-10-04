@@ -7,6 +7,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/DamageType.h"
@@ -211,6 +212,12 @@ bool AVulcanBoss::TryStartAttack(float DistanceToPlayer)
 
 	CurrentAttack = Chosen;
 	FacePlayer();
+
+	if (bShowDebug && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
+			FString::Printf(TEXT("Vulcan: %s"), *UEnum::GetDisplayValueAsText(Chosen).ToString()));
+	}
 
 	switch (Chosen)
 	{

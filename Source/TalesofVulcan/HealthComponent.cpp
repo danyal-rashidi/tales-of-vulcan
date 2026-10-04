@@ -1,5 +1,6 @@
 #include "HealthComponent.h"
 #include "GameFramework/Actor.h"
+#include "Engine/Engine.h"
 
 UHealthComponent::UHealthComponent()
 {
@@ -30,8 +31,19 @@ void UHealthComponent::HandleTakeAnyDamage(AActor* DamagedActor, float Damage, c
 	Health = FMath::Clamp(Health - Damage, 0.f, MaxHealth);
 	OnHealthChanged.Broadcast(Health, MaxHealth);
 
+	if (bPrintDamageToScreen && GEngine)
+	{
+		const FString Message = FString::Printf(TEXT("%s took %.0f damage (%.0f / %.0f)"),
+			*GetNameSafe(DamagedActor), Damage, Health, MaxHealth);
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, Message);
+	}
+
 	if (IsDead())
 	{
+		if (bPrintDamageToScreen && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("%s DIED"), *GetNameSafe(DamagedActor)));
+		}
 		OnDeath.Broadcast(DamageCauser);
 	}
 }
