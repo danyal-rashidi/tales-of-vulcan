@@ -87,6 +87,53 @@ public:
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TObjectPtr<UPointLightComponent> CoreGlow;
 
+	// ---------------------------------------------------------------- Statue intro
+
+	/**
+	 * Vulcan starts as a bronze statue. When the player gets close it shakes, then
+	 * transforms into the lava otter and the fight begins. Invulnerable until then.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	bool bStatueIntro = true;
+
+	/**
+	 * Put a sculpture model here (Static Mesh) and line it up in the viewport.
+	 * Leave it empty and the otter itself turns to bronze instead.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Vulcan|Statue Intro")
+	TObjectPtr<UStaticMeshComponent> StatueMesh;
+
+	/** The statue awakens when the player comes this close. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float IntroTriggerRange = 1200.f;
+
+	/** Seconds of shaking between "statue notices you" and the transformation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float StatueAwakenTime = 2.5f;
+
+	/** How violently it shakes while awakening (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float AwakenShake = 4.f;
+
+	/** Used when there's no sculpture model: the otter body is tinted this. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro", meta=(HideAlphaChannel))
+	FLinearColor BronzeColor = FLinearColor(FColor(150, 95, 45));
+
+	UFUNCTION(BlueprintPure, Category="Vulcan|Statue Intro")
+	bool IsStatue() const { return IntroState != EIntroState::Done; }
+
+	/** Start the transformation now (e.g. from a cutscene trigger). */
+	UFUNCTION(BlueprintCallable, Category="Vulcan|Statue Intro")
+	void AwakenFromStatue();
+
+	/** Statue starts shaking: crack sounds, dust, camera shake. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnStatueAwakening();
+
+	/** Statue became the otter: burst of fire/smoke, roar. The fight starts right after. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnStatueTransformed();
+
 	// ---------------------------------------------------------------- General
 
 	/** Off = Vulcan waits until StartFight is called (e.g. from an arena trigger box). */
@@ -328,6 +375,16 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
+	enum class EIntroState : uint8 { Statue, Awakening, Done };
+	EIntroState IntroState = EIntroState::Done;
+	FTimerHandle IntroTimer;
+	FVector MeshRestLocation = FVector::ZeroVector;
+	FVector StatueRestLocation = FVector::ZeroVector;
+
+	void FreezeStatuePose();
+	void FinishAwakening();
+	bool HasStatueModel() const;
+
 	void ApplyOtterLook();
 	void UpdateOtterBody();
 

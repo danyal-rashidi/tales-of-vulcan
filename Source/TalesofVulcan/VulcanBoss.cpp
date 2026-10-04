@@ -116,6 +116,12 @@ AVulcanBoss::AVulcanBoss()
 		OtterParts.Add(Part);
 	}
 
+	StatueMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StatueMesh"));
+	StatueMesh->SetupAttachment(GetCapsuleComponent());
+	StatueMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	StatueMesh->SetCanEverAffectNavigation(false);
+	StatueMesh->SetRelativeLocation(FVector(0.f, 0.f, -90.f)); // feet at the bottom of the capsule
+
 	CoreGlow = CreateDefaultSubobject<UPointLightComponent>(TEXT("Otter_CoreGlow"));
 	CoreGlow->SetupAttachment(GetMesh());
 	CoreGlow->SetIntensityUnits(ELightUnits::Candelas);
@@ -146,7 +152,18 @@ void AVulcanBoss::BeginPlay()
 	HealthComponent->OnHealthChanged.AddDynamic(this, &AVulcanBoss::HandleHealthChanged);
 	HealthComponent->OnDeath.AddDynamic(this, &AVulcanBoss::HandleDeath);
 
-	if (bStartFightOnBeginPlay)
+	MeshRestLocation = GetMesh()->GetRelativeLocation();
+	StatueRestLocation = StatueMesh->GetRelativeLocation();
+
+	if (bStatueIntro)
+	{
+		// Statue until the player comes close (see Think). Let the idle pose settle, then freeze it.
+		IntroState = EIntroState::Statue;
+		HealthComponent->bInvulnerable = true;
+		ApplyOtterLook();
+		GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FreezeStatuePose, 0.2f, false);
+	}
+	else if (bStartFightOnBeginPlay)
 	{
 		StartFight();
 	}
@@ -158,28 +175,84 @@ void AVulcanBoss::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
+	// Show the statue look in the editor too, so the sculpture model can be lined up.
+	IntroState = bStatueIntro ? EIntroState::Statue : EIntroState::Done;
+
 	ApplyOtterLook();
 	UpdateOtterBody();
 }
 
 // ============================================================ Otter body
 
+bool AVulcanBoss::HasStatueModel() const
+{
+	return StatueMesh && StatueMesh->GetStaticMesh() != nullptr;
+}
+
+void AVulcanBoss::FreezeStatuePose()
+{
+	if (IntroState == EIntroState::Statue)
+	{
+		GetMesh()->bPauseAnims = true;
+	}
+}
+
+void AVulcanBoss::AwakenFromStatue()
+{
+	if (IntroState != EIntroState::Statue)
+	{
+		return;
+	}
+
+	IntroState = EIntroState::Awakening;
+	OnStatueAwakening();
+
+	if (bShowDebug && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, StatueAwakenTime, FColor::Orange, TEXT("The statue begins to crack..."));
+	}
+
+	GetWorldTimerManager().SetTimer(IntroTimer, this, &AVulcanBoss::FinishAwakening, FMath::Max(StatueAwakenTime, 0.05f), false);
+}
+
+void AVulcanBoss::FinishAwakening()
+{
+	IntroState = EIntroState::Done;
+
+	GetMesh()->bPauseAnims = false;
+	GetMesh()->SetRelativeLocation(MeshRestLocation);
+	StatueMesh->SetRelativeLocation(StatueRestLocation);
+	HealthComponent->bInvulnerable = false;
+
+	ApplyOtterLook();
+	OnStatueTransformed();
+
+	StartFight();
+	NextAttackTime = GetWorld()->GetTimeSeconds() + 1.f; // a beat to react before the first attack
+}
+
 void AVulcanBoss::ApplyOtterLook()
 {
-	GetMesh()->SetVisibility(!bUseOtterBody, false);
+	const bool bStatue = IntroState != EIntroState::Done;
+	const bool bStatueModel = bStatue && HasStatueModel();
+	const bool bShowOtter = bUseOtterBody && !bStatueModel;
+
+	StatueMesh->SetVisibility(bStatueModel);
+	GetMesh()->SetVisibility(!bUseOtterBody && !bStatueModel, false);
 
 	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
-	// When Vulcan dies the lava cools to black rock and the eyes go dark.
+	// When Vulcan dies the lava cools to black rock. As a statue, everything is bronze.
 	const FLinearColor CooledLava = FLinearColor(FColor(30, 26, 26));
+	const FLinearColor DarkBronze = BronzeColor * 0.55f;
 	const FLinearColor SlotColors[OtterBody::SlotCount] =
 	{
-		FurColor,
-		bDead ? CooledLava : LavaColor,
-		ObsidianColor,
-		EyeColor,
-		LensColor,
-		MuzzleColor
+		bStatue ? BronzeColor : FurColor,
+		bStatue ? BronzeColor : (bDead ? CooledLava : LavaColor),
+		bStatue ? DarkBronze : ObsidianColor,
+		bStatue ? DarkBronze : EyeColor,
+		bStatue ? BronzeColor : LensColor,
+		bStatue ? BronzeColor : MuzzleColor
 	};
 
 	OtterMaterials.SetNum(OtterBody::SlotCount);
@@ -203,13 +276,13 @@ void AVulcanBoss::ApplyOtterLook()
 			continue;
 		}
 
-		Part->SetVisibility(bUseOtterBody && (bShowGlasses || !OtterBody::IsGlasses(i)));
+		Part->SetVisibility(bShowOtter && (bShowGlasses || !OtterBody::IsGlasses(i)));
 		Part->SetMaterial(0, OtterMaterials[OtterBody::Colors[i]]);
 	}
 
 	if (CoreGlow)
 	{
-		CoreGlow->SetVisibility(bUseOtterBody && !bDead);
+		CoreGlow->SetVisibility(bShowOtter && !bDead && !bStatue);
 	}
 }
 
@@ -219,6 +292,10 @@ void AVulcanBoss::UpdateOtterBody()
 	if (!bUseOtterBody || !Body || OtterParts.Num() != OtterBody::Count)
 	{
 		return;
+	}
+	if (IntroState != EIntroState::Done && HasStatueModel())
+	{
+		return; // the sculpture is showing instead
 	}
 
 	using namespace OtterBody;
@@ -429,7 +506,12 @@ void AVulcanBoss::UpdateOtterBody()
 
 void AVulcanBoss::StartFight()
 {
-	if (bFightActive || bDead)
+	if (IntroState == EIntroState::Statue)
+	{
+		AwakenFromStatue(); // the fight starts once the transformation finishes
+		return;
+	}
+	if (bFightActive || bDead || IntroState == EIntroState::Awakening)
 	{
 		return;
 	}
@@ -444,7 +526,19 @@ void AVulcanBoss::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	OtterTime += DeltaSeconds;
+	if (IntroState == EIntroState::Done)
+	{
+		OtterTime += DeltaSeconds; // statues don't sway
+	}
+	else if (IntroState == EIntroState::Awakening)
+	{
+		// Shake harder and harder until it breaks free.
+		const float Progress = 1.f - GetWorldTimerManager().GetTimerRemaining(IntroTimer) / FMath::Max(StatueAwakenTime, 0.05f);
+		const FVector Jitter = FMath::VRand() * AwakenShake * FMath::Clamp(Progress, 0.2f, 1.f);
+		GetMesh()->SetRelativeLocation(MeshRestLocation + Jitter);
+		StatueMesh->SetRelativeLocation(StatueRestLocation + Jitter);
+	}
+
 	UpdateOtterBody();
 
 	if (!bDirectChase || bDead || CurrentAttack != EVulcanAttack::None)
@@ -463,6 +557,17 @@ void AVulcanBoss::Tick(float DeltaSeconds)
 void AVulcanBoss::Think()
 {
 	bDirectChase = false;
+
+	// Statue intro: wake up when the player comes close.
+	if (IntroState == EIntroState::Statue)
+	{
+		const APawn* Player = GetPlayer();
+		if (Player && FVector::Dist2D(GetActorLocation(), Player->GetActorLocation()) <= IntroTriggerRange)
+		{
+			AwakenFromStatue();
+		}
+		return;
+	}
 
 	if (bDead || !bFightActive || CurrentAttack != EVulcanAttack::None)
 	{
