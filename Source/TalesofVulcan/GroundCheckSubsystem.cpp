@@ -101,7 +101,11 @@ void UGroundCheckSubsystem::StartEnvShot()
 	After(3.0f, [this]() { Shot(TEXT("env_grass_close")); });
 	After(3.2f, [this, Center]() { ShootFrom(Center + FVector(-500.f, 0.f, 250.f), Center + FVector(3300.f, 0.f, 300.f)); });
 	After(3.6f, [this]() { Shot(TEXT("env_wall")); });
-	After(4.0f, []() { FPlatformMisc::RequestExit(false); });
+	After(3.8f, [this]() { ShootFrom(FVector(560.f, -640.f, 300.f), FVector(-120.f, 60.f, 60.f)); });
+	After(4.2f, [this]() { Shot(TEXT("env_stairs")); });
+	After(4.4f, [this]() { ShootFrom(FVector(-800.f, 760.f, 220.f), FVector(-120.f, 60.f, 60.f)); });
+	After(4.8f, [this]() { Shot(TEXT("env_stairs2")); });
+	After(5.2f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartBossShot()
