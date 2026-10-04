@@ -79,7 +79,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
 	bool bShowGlasses = true;
 
-	/** Size of the head and everything on it (face, glasses, ears, head spikes). 1 = original. */
+	/**
+	 * Size of the original otter's head and everything on it (face, glasses, ears, head spikes). 1 = original.
+	 * The awakened otter (see bAwakenedForm) has its own fixed proportions.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0.25", ClampMax="4"))
 	float HeadScale = 2.f;
 
@@ -105,6 +108,22 @@ public:
 
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TObjectPtr<UPointLightComponent> CoreGlow;
+
+	/**
+	 * Once provoked (the statue awakens, the fight starts, or Vulcan gets hit) the original otter turns into the
+	 * awakened chibi otter: huge round head, a curved cream face pattern with chubby cheeks, a cream belly with a
+	 * small glowing lava core, stubby limbs and a longer tail. Obsidian spikes, no glasses. Same colors as above.
+	 * Off = the original otter for the whole fight.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
+	bool bAwakenedForm = true;
+
+	/** Show the awakened form in the editor viewport instead of the start-up look. Doesn't affect play. */
+	UPROPERTY(EditAnywhere, Category="Vulcan|Otter Body")
+	bool bPreviewAwakenedForm = false;
+
+	UFUNCTION(BlueprintPure, Category="Vulcan|Otter Body")
+	bool IsInAwakenedForm() const { return bAwakenedShown; }
 
 	// ---------------------------------------------------------------- Statue intro
 
@@ -236,6 +255,10 @@ public:
 	/** Statue became the otter: burst of fire/smoke, roar. The fight starts right after. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
 	void OnStatueTransformed();
+
+	/** Provoked: Vulcan just switched to the awakened otter form. Good spot for a puff of smoke. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnAwakenedFormShown();
 
 	// ---------------------------------------------------------------- General
 
@@ -509,6 +532,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 
@@ -570,6 +594,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMeshComponent> BloodSunDisk;
 
+	/** Owns BloodSunDisk, so the sun stays in the sky while Vulcan himself is hidden (Magma Dive). */
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> BloodSunHolder;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BloodSunMaterial;
 	FLinearColor SkyStartTint = FLinearColor::White;
@@ -584,6 +612,12 @@ private:
 	void UpdateOtterBody();
 	/** Re-finds the Otter_* components by name if OtterParts doesn't match the current part list. */
 	void RebindOtterParts();
+	void LayoutAwakenedOtter(float S, const FVector& Fwd, const FVector& Right);
+	void PlaceCoreGlow(const FVector& Pelvis, const FVector& Spine, const FVector& Fwd, float S);
+	void ShowAwakenedForm();
+
+	/** True once provoked (see bAwakenedForm). */
+	bool bAwakenedShown = false;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> OtterMaterials;
