@@ -7,7 +7,7 @@
 namespace GrassLook
 {
 	// Sun-bleached straw, darker dry stems, and a few olive ones.
-	const FLinearColor Colors[3] = { FLinearColor(0.78f, 0.6f, 0.32f), FLinearColor(0.52f, 0.38f, 0.19f), FLinearColor(0.6f, 0.55f, 0.28f) };
+	const FLinearColor Colors[3] = { FLinearColor(0.56f, 0.48f, 0.32f), FLinearColor(0.38f, 0.31f, 0.21f), FLinearColor(0.46f, 0.44f, 0.3f) };
 }
 
 AWindGrass::AWindGrass()
@@ -87,7 +87,7 @@ void AWindGrass::FinishTufts()
 			BandMaterials[Band]->SetVectorParameterValue(TEXT("Color"), GrassLook::Colors[Band]);
 			BandMaterials[Band]->SetScalarParameterValue(TEXT("Metallic"), 0.f);
 			BandMaterials[Band]->SetScalarParameterValue(TEXT("Roughness"), 0.95f);
-			BandMaterials[Band]->SetScalarParameterValue(TEXT("Glow"), 0.15f); // thin blades are mostly lit edge-on; a little glow keeps them straw-coloured
+			BandMaterials[Band]->SetScalarParameterValue(TEXT("Glow"), 0.1f); // thin blades are mostly lit edge-on; a little glow keeps them straw-coloured
 			Bands[Band]->SetMaterial(0, BandMaterials[Band]);
 		}
 		Bands[Band]->ClearInstances();
