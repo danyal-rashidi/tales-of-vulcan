@@ -2,6 +2,7 @@
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
 #include "DodgeComponent.h"
+#include "LockOnComponent.h"
 #include "PlungeAttackComponent.h"
 #include "SpearGripComponent.h"
 #include "Animation/AnimMontage.h"
@@ -77,8 +78,12 @@ bool UMeleeAttackComponent::TryAttack()
 		}
 	}
 
-	// Swing toward the direction the player is pressing.
+	// Swing toward the locked-on target, otherwise toward the direction the player is pressing.
 	FVector Direction = Character->GetLastMovementInputVector();
+	if (const ULockOnComponent* LockOn = Character->FindComponentByClass<ULockOnComponent>(); LockOn && LockOn->IsLocked())
+	{
+		Direction = LockOn->GetTargetPoint() - Character->GetActorLocation();
+	}
 	Direction.Z = 0.f;
 	if (!Direction.IsNearlyZero())
 	{

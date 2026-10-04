@@ -1,6 +1,7 @@
 #include "GroundCheckSubsystem.h"
 #include "FireFX.h"
 #include "HipRootMotionComponent.h"
+#include "LockOnComponent.h"
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
 #include "VulcanBoss.h"
@@ -29,7 +30,7 @@ bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	const TCHAR* CommandLine = FCommandLine::Get();
 	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
-		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")))
+		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -55,6 +56,10 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("FireShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartFireShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("LockShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartLockShot, 2.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
 	{
@@ -201,6 +206,43 @@ void UGroundCheckSubsystem::StartBossProbe()
 	After(26.f, []() { FPlatformMisc::RequestExit(false); });
 }
 
+void UGroundCheckSubsystem::StartLockShot()
+{
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> It(World);
+	AVulcanBoss* Boss = It ? *It : nullptr;
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
+	if (!Boss || !Player || !Controller)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	Boss->StartFight();
+
+	// Stand in the open 12 m in front of Vulcan.
+	After(5.5f, [Player, Boss]()
+	{
+		const FVector Away = (Player->GetActorLocation() - Boss->GetActorLocation()).GetSafeNormal2D();
+		Player->SetActorLocation(Boss->GetActorLocation() + Away * 1200.f + FVector(0.f, 0.f, 50.f), false, nullptr, ETeleportType::TeleportPhysics);
+	});
+	// After the wake-up roar: face roughly toward Vulcan, lock on, and watch through the player's camera.
+	After(6.f, [Player, Controller, Boss]()
+	{
+		Controller->SetControlRotation((Boss->GetActorLocation() - Player->GetActorLocation()).Rotation() + FRotator(0.f, 25.f, 0.f));
+	});
+	After(6.3f, [Player]()
+	{
+		ULockOnComponent* LockOn = Player->FindComponentByClass<ULockOnComponent>();
+		UE_LOG(LogTemp, Warning, TEXT("[LockShot] lock-on component %s, locked: %d"), LockOn ? TEXT("found") : TEXT("missing"), LockOn && LockOn->ToggleLock() ? 1 : 0);
+	});
+	for (int32 i = 0; i < 12; ++i)
+	{
+		After(6.4f + i * 0.5f, [this, i]() { Shot(FString::Printf(TEXT("lock_%02d"), i)); });
+	}
+	After(13.f, []() { FPlatformMisc::RequestExit(false); });
+}
+
 void UGroundCheckSubsystem::StartFireShot()
 {
 	UWorld* World = GetWorld();
@@ -251,7 +293,8 @@ void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)
 
 void UGroundCheckSubsystem::Shot(const FString& Name)
 {
-	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), false, false);
+	// Lock-on shots include the UI so the target dot shows.
+	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
 }
 
 void UGroundCheckSubsystem::StartSpearShot()

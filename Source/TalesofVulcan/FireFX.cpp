@@ -148,6 +148,26 @@ FFireSettings AFireFX::GroundFirePreset(float Radius, float Duration)
 	return S;
 }
 
+FFireSettings AFireFX::TorchPreset(float Radius)
+{
+	FFireSettings S;
+	S.Rate = 45.f;
+	S.Duration = 1.0e7f; // burns for the whole game
+	S.SpawnRadius = Radius;
+	S.SpreadDegrees = 10.f;
+	S.Speed = FVector2D(60.f, 140.f);
+	S.Lifetime = FVector2D(0.4f, 0.8f);
+	S.Size = FVector2D(14.f, 28.f);
+	S.GrowTo = 0.6f;
+	S.Rise = 260.f;
+	S.Drag = 1.f;
+	S.Stretch = 1.5f;
+	S.Mix = FVector(0.3f, 0.5f, 0.2f);
+	S.LightIntensity = 160.f;
+	S.LightRadius = 1600.f;
+	return S;
+}
+
 void AFireFX::Start(const FFireSettings& InSettings, USceneComponent* InFollow)
 {
 	Settings = InSettings;

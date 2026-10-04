@@ -68,6 +68,8 @@ public:
 	static FFireSettings EmbersPreset(float Radius, float Duration);
 	/** Flames licking up from a burning patch of ground. */
 	static FFireSettings GroundFirePreset(float Radius, float Duration);
+	/** A brazier or torch that burns forever, with a warm flickering light. */
+	static FFireSettings TorchPreset(float Radius);
 
 	/** Stop emitting; the effect fades out and removes itself. */
 	void Stop();

@@ -14,6 +14,7 @@
  * - the ramps up to the centre platform replaced by worn, broken Roman stone stairs,
  * - a ruined look: rubble heaps where the wall has collapsed, toppled broken columns, debris on the stands,
  * - every stone surface (colosseum, columns, rubble, stairs) in the same weathered stone material,
+ * - a low, warm late-afternoon sun with light shafts, and six fire braziers casting flickering light,
  * - a dark-fantasy grade: weathered dark stone and ashen ground (material tints), desaturated,
  *   high-contrast, cold-shadowed colour grading with vignette and grain.
  * Console: tov.ArenaDressing 0 turns it all off (takes effect on the next Play).
@@ -35,6 +36,8 @@ private:
 	void PlantGrass(UWorld& World);
 	void WeatherMaterials(UWorld& World);
 	void ColorGrade(UWorld& World);
+	void SetupLighting(UWorld& World);
+	void PlaceBraziers(UWorld& World);
 
 	/** One darkened copy of each original material, shared by everything that used it. */
 	UPROPERTY(Transient)
