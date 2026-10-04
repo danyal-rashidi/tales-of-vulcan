@@ -28,7 +28,10 @@ namespace OtterBody
 		EyeL, EyeR, ShineL, ShineR, BrowDotL, BrowDotR,
 		EarL, EarR, InnerEarL, InnerEarR,
 		WhiskerL0, WhiskerL1, WhiskerL2, WhiskerR0, WhiskerR1, WhiskerR2,
-		FrameL, FrameR, LensL, LensR, Bridge,
+		// Glasses: each rim is a ring of 10 beads, so you can see the eye through it
+		RimL0, RimL1, RimL2, RimL3, RimL4, RimL5, RimL6, RimL7, RimL8, RimL9,
+		RimR0, RimR1, RimR2, RimR3, RimR4, RimR5, RimR6, RimR7, RimR8, RimR9,
+		Bridge,
 		UpperArmL, LowerArmL, HandL, UpperArmR, LowerArmR, HandR,
 		ThighL, CalfL, FootL, ThighR, CalfR, FootR,
 		Tail0, Tail1, Tail2,
@@ -47,7 +50,11 @@ namespace OtterBody
 		TEXT("EyeL"), TEXT("EyeR"), TEXT("ShineL"), TEXT("ShineR"), TEXT("BrowDotL"), TEXT("BrowDotR"),
 		TEXT("EarL"), TEXT("EarR"), TEXT("InnerEarL"), TEXT("InnerEarR"),
 		TEXT("WhiskerL0"), TEXT("WhiskerL1"), TEXT("WhiskerL2"), TEXT("WhiskerR0"), TEXT("WhiskerR1"), TEXT("WhiskerR2"),
-		TEXT("FrameL"), TEXT("FrameR"), TEXT("LensL"), TEXT("LensR"), TEXT("Bridge"),
+		TEXT("RimL0"), TEXT("RimL1"), TEXT("RimL2"), TEXT("RimL3"), TEXT("RimL4"),
+		TEXT("RimL5"), TEXT("RimL6"), TEXT("RimL7"), TEXT("RimL8"), TEXT("RimL9"),
+		TEXT("RimR0"), TEXT("RimR1"), TEXT("RimR2"), TEXT("RimR3"), TEXT("RimR4"),
+		TEXT("RimR5"), TEXT("RimR6"), TEXT("RimR7"), TEXT("RimR8"), TEXT("RimR9"),
+		TEXT("Bridge"),
 		TEXT("UpperArmL"), TEXT("LowerArmL"), TEXT("HandL"), TEXT("UpperArmR"), TEXT("LowerArmR"), TEXT("HandR"),
 		TEXT("ThighL"), TEXT("CalfL"), TEXT("FootL"), TEXT("ThighR"), TEXT("CalfR"), TEXT("FootR"),
 		TEXT("Tail0"), TEXT("Tail1"), TEXT("Tail2"),
@@ -62,7 +69,9 @@ namespace OtterBody
 		Eye, Eye, Lens, Lens, MuzzleTone, MuzzleTone,
 		Fur, Fur, MuzzleTone, MuzzleTone,
 		Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian,
-		Obsidian, Obsidian, Lens, Lens, Obsidian,
+		Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian,
+		Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian, Obsidian,
+		Obsidian,
 		Fur, Fur, Fur, Fur, Fur, Fur,
 		Fur, Fur, Fur, Fur, Fur, Fur,
 		Fur, Fur, Fur,
@@ -72,7 +81,9 @@ namespace OtterBody
 	};
 
 	bool IsSpike(int32 Part) { return Part >= SpikeBack0 && Part < Count; }
-	bool IsGlasses(int32 Part) { return Part >= FrameL && Part <= Bridge; }
+	bool IsGlasses(int32 Part) { return Part >= RimL0 && Part <= Bridge; }
+
+	constexpr int32 RimBeads = 10;
 }
 
 AVulcanBoss::AVulcanBoss()
@@ -93,6 +104,8 @@ AVulcanBoss::AVulcanBoss()
 		GetMesh()->SetAnimInstanceClass(StandInAnim.Class);
 	}
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
+	// Squash the skeleton: shorter legs and torso give the otter chunky, chibi proportions.
+	GetMesh()->SetRelativeScale3D(FVector(0.9f, 0.9f, 0.7f));
 
 	// Boss-sized, and easy to tell apart from the player mannequin.
 	GetCapsuleComponent()->SetRelativeScale3D(FVector(1.6f));
@@ -240,7 +253,13 @@ void AVulcanBoss::ApplyOtterLook()
 	StatueMesh->SetVisibility(bStatueModel);
 	GetMesh()->SetVisibility(!bUseOtterBody && !bStatueModel, false);
 
-	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	// M_VulcanShape (made by Tools/make_vulcan_material.py) adds Metallic/Roughness/Glow.
+	// Fall back to the engine's plain shape material if it hasn't been created.
+	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!BaseMaterial)
+	{
+		BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
 
 	// When Vulcan dies the lava cools to black rock. As a statue, everything is bronze.
 	const FLinearColor CooledLava = FLinearColor(FColor(30, 26, 26));
@@ -255,16 +274,25 @@ void AVulcanBoss::ApplyOtterLook()
 		bStatue ? BronzeColor : MuzzleColor
 	};
 
+	// Shine per slot: metallic fur, glowing matte lava, glassy obsidian and eyes, glowing highlights.
+	// A statue is all polished bronze.
+	const float SlotMetallic[OtterBody::SlotCount] = { BodyMetallic, 0.f, 0.7f, 0.3f, 0.f, BodyMetallic * 0.7f };
+	const float SlotRoughness[OtterBody::SlotCount] = { BodyRoughness, 0.5f, 0.08f, 0.05f, 0.3f, FMath::Min(BodyRoughness + 0.1f, 1.f) };
+	const float SlotGlow[OtterBody::SlotCount] = { 0.f, bDead ? 0.f : LavaGlow, 0.f, 0.f, 0.6f, 0.f };
+
 	OtterMaterials.SetNum(OtterBody::SlotCount);
 	for (int32 Slot = 0; Slot < OtterBody::SlotCount; ++Slot)
 	{
-		if (!OtterMaterials[Slot] && BaseMaterial)
+		if (BaseMaterial && (!OtterMaterials[Slot] || OtterMaterials[Slot]->Parent != BaseMaterial))
 		{
 			OtterMaterials[Slot] = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 		}
-		if (OtterMaterials[Slot])
+		if (UMaterialInstanceDynamic* Material = OtterMaterials[Slot])
 		{
-			OtterMaterials[Slot]->SetVectorParameterValue(TEXT("Color"), SlotColors[Slot]);
+			Material->SetVectorParameterValue(TEXT("Color"), SlotColors[Slot]);
+			Material->SetScalarParameterValue(TEXT("Metallic"), bStatue ? 1.f : SlotMetallic[Slot]);
+			Material->SetScalarParameterValue(TEXT("Roughness"), bStatue ? 0.35f : SlotRoughness[Slot]);
+			Material->SetScalarParameterValue(TEXT("Glow"), bStatue ? 0.f : SlotGlow[Slot]);
 		}
 	}
 
@@ -300,7 +328,8 @@ void AVulcanBoss::UpdateOtterBody()
 
 	using namespace OtterBody;
 
-	const float S = Body->GetComponentScale().Z;
+	// Thickness follows the horizontal scale (the skeleton is squashed vertically on purpose).
+	const float S = Body->GetComponentScale().X;
 	const FVector Up = FVector::UpVector;
 	const FVector Fwd = GetActorForwardVector();
 	const FVector Right = GetActorRightVector();
@@ -345,12 +374,12 @@ void AVulcanBoss::UpdateOtterBody()
 	const FMatrix TorsoAxes = FRotationMatrix::MakeFromZX(TorsoAxis.IsNearlyZero() ? Up : TorsoAxis, Fwd);
 	const float TorsoSpan = FVector::Dist(Pelvis, NeckBone);
 	const FVector TorsoCenter = FMath::Lerp(Pelvis, NeckBone, 0.45f);
-	const float TorsoDepthCm = 40.f;
-	const float TorsoHalfLength = (TorsoSpan + 35.f * S) * 0.5f;
+	const float TorsoDepthCm = 48.f;
+	const float TorsoHalfLength = (TorsoSpan + 45.f * S) * 0.5f;
 
 	OtterParts[Torso]->SetWorldTransform(FTransform(TorsoAxes.Rotator(), TorsoCenter,
-		FVector(TorsoDepthCm * S, 44.f * S, TorsoHalfLength * 2.f) / 100.f));
-	Blob(BellyPatch, FMath::Lerp(Pelvis, NeckBone, 0.3f) + TorsoAxes.GetScaledAxis(EAxis::X) * 12.f * S, TorsoAxes, FVector(22.f, 34.f, 46.f));
+		FVector(TorsoDepthCm * S, 56.f * S, TorsoHalfLength * 2.f) / 100.f));
+	Blob(BellyPatch, FMath::Lerp(Pelvis, NeckBone, 0.3f) + TorsoAxes.GetScaledAxis(EAxis::X) * 15.f * S, TorsoAxes, FVector(26.f, 42.f, 56.f));
 
 	// How far the back surface is from the spine at a point along the torso (it's an ellipsoid).
 	auto TorsoBackDepth = [&](const FVector& Point)
@@ -365,10 +394,9 @@ void AVulcanBoss::UpdateOtterBody()
 	const FVector HF = HeadAxes.GetScaledAxis(EAxis::X);
 	const FVector HR = HeadAxes.GetScaledAxis(EAxis::Y);
 	const FVector HU = HeadAxes.GetScaledAxis(EAxis::Z);
-	// Big chibi head (radii 22 deep, 25 wide, 21 tall), wide cream muzzle wrapping the cheeks.
-	const FVector HeadRadii(22.f, 25.f, 21.f);
-	const FVector HeadCenter = HeadBone + (HU * 15.f + HF * 2.f) * S;
-	const FVector MuzzleCenter = HeadCenter + (HF * 10.f - HU * 9.f) * S;
+	// Big chibi head (radii 30 deep, 34 wide, 29 tall). Every face feature is placed on its surface.
+	const FVector HeadRadii(30.f, 34.f, 29.f);
+	const FVector HeadCenter = HeadBone + (HU * 22.f + HF * 2.f) * S;
 
 	// Distance from head center to the face surface at a given sideways/up offset (cm).
 	auto FaceDepth = [&HeadRadii](float SideCm, float UpCm)
@@ -382,35 +410,49 @@ void AVulcanBoss::UpdateOtterBody()
 	};
 
 	Blob(Head, HeadCenter, HeadAxes, HeadRadii * 2.f);
-	Blob(Muzzle, MuzzleCenter, HeadAxes, FVector(30.f, 44.f, 24.f));
-	Blob(Nose, MuzzleCenter + (HF * 14.2f + HU * 5.f) * S, HeadAxes, FVector(5.f, 7.f, 4.5f));
-	Blob(Bridge, OnFace(0.f, 1.f, 0.8f), HeadAxes, FVector(1.5f, 5.f, 1.4f));
+	// Muzzle: a wide cream bulge over the lower face and cheeks, like the reference.
+	Blob(Muzzle, OnFace(0.f, -12.f, -14.f), HeadAxes, FVector(32.f, 54.f, 30.f));
+	Blob(Nose, OnFace(0.f, -4.f, 2.f), HeadAxes, FVector(6.f, 9.f, 6.f));
+	Blob(Bridge, OnFace(0.f, 4.f, 0.9f), HeadAxes, FVector(1.6f, 6.f, 1.6f));
+
+	const float EyeSide = 12.f;
+	const float EyeUp = 3.f;
+	const float RimRadius = 9.f;
 
 	for (int32 Side = 0; Side < 2; ++Side)
 	{
 		const float Sign = Side == 0 ? -1.f : 1.f; // left side is -Right
 
-		// Big glossy eyes with a white catchlight; round glasses around them.
-		const float EyeOut = bShowGlasses ? 1.6f : 0.3f;
-		const FVector EyeCenter = OnFace(10.f * Sign, 1.f, EyeOut);
-		Blob(Side == 0 ? FrameL : FrameR, OnFace(10.f * Sign, 1.f, 0.6f), HeadAxes, FVector(1.f, 16.f, 16.f));
-		Blob(Side == 0 ? LensL : LensR, OnFace(10.f * Sign, 1.f, 1.0f), HeadAxes, FVector(1.f, 13.f, 13.f));
-		Blob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(3.f, 8.f, 10.f));
-		Blob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 1.4f + HU * 2.5f - HR * 1.5f) * S, HeadAxes, FVector(1.f, 2.2f, 2.6f));
+		// Big glossy eyes with a white catchlight.
+		const FVector EyeCenter = OnFace(EyeSide * Sign, EyeUp, 0.4f);
+		Blob(Side == 0 ? EyeL : EyeR, EyeCenter, HeadAxes, FVector(3.f, 9.f, 11.f));
+		Blob(Side == 0 ? ShineL : ShineR, EyeCenter + (HF * 1.4f + HU * 3.f - HR * 2.f) * S, HeadAxes, FVector(1.f, 2.8f, 3.2f));
+
+		// Round glasses: a ring of beads hugging the face around each eye (see-through).
+		for (int32 b = 0; b < RimBeads; ++b)
+		{
+			const float Angle = 2.f * PI * b / RimBeads;
+			const float BeadSide = EyeSide * Sign + RimRadius * FMath::Cos(Angle);
+			const float BeadUp = EyeUp + RimRadius * FMath::Sin(Angle);
+			const FVector Tangent = (-HR * FMath::Sin(Angle) + HU * FMath::Cos(Angle)).GetSafeNormal();
+			const FMatrix BeadAxes = FRotationMatrix::MakeFromZX(Tangent, HF);
+			const float BeadLength = 2.f * PI * RimRadius / RimBeads + 1.5f; // overlap neighbours into a smooth ring
+			Blob((Side == 0 ? RimL0 : RimR0) + b, OnFace(BeadSide, BeadUp, 0.9f), BeadAxes, FVector(1.8f, 1.8f, BeadLength));
+		}
 
 		// Little eyebrow dots.
-		Blob(Side == 0 ? BrowDotL : BrowDotR, OnFace(9.f * Sign, 9.f, 0.2f), HeadAxes, FVector(1.5f, 3.6f, 2.2f));
+		Blob(Side == 0 ? BrowDotL : BrowDotR, OnFace(10.f * Sign, 15.f, 0.2f), HeadAxes, FVector(1.5f, 4.5f, 2.8f));
 
-		// Round ears with a light inside.
-		const FVector EarCenter = HeadCenter + (HR * 16.f * Sign + HU * 14.f - HF * 2.f) * S;
-		Blob(Side == 0 ? EarL : EarR, EarCenter, HeadAxes, FVector(7.f, 12.f, 12.f));
-		Blob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 3.f * S, HeadAxes, FVector(2.f, 7.f, 7.f));
+		// Round ears with a light inside, up on the top corners of the head.
+		const FVector EarCenter = HeadCenter + (HR * 23.f * Sign + HU * 19.f - HF * 3.f) * S;
+		Blob(Side == 0 ? EarL : EarR, EarCenter, HeadAxes, FVector(8.f, 15.f, 15.f));
+		Blob(Side == 0 ? InnerEarL : InnerEarR, EarCenter + HF * 3.5f * S, HeadAxes, FVector(2.f, 9.f, 9.f));
 
 		// Three whiskers fanning out from each cheek.
 		for (int32 k = 0; k < 3; ++k)
 		{
-			const FVector Root = MuzzleCenter + (HR * 16.f * Sign + HF * 9.f + HU * (1.f - k * 2.5f)) * S;
-			const FVector Tip = Root + (HR * 14.f * Sign - HF * 1.f + HU * (3.f - k * 3.f)) * S;
+			const FVector Root = OnFace(15.f * Sign, -9.f - k * 2.5f, -0.5f);
+			const FVector Tip = Root + (HR * 17.f * Sign - HF * 2.f + HU * (4.f - k * 4.f)) * S;
 			Limb((Side == 0 ? WhiskerL0 : WhiskerR0) + k, Root, Tip, 0.35f);
 		}
 	}
@@ -426,9 +468,9 @@ void AVulcanBoss::UpdateOtterBody()
 		const FVector PawCenter = Hand[Side] + ForearmDir * 3.f * S;
 		const FMatrix PawAxes = FRotationMatrix::MakeFromZX(ForearmDir.IsNearlyZero() ? Up : ForearmDir, Fwd);
 
-		Limb(Side == 0 ? UpperArmL : UpperArmR, UpperArm[Side], LowerArm[Side], 6.f);
-		Limb(Side == 0 ? LowerArmL : LowerArmR, LowerArm[Side], Hand[Side], 5.5f);
-		Blob(Side == 0 ? HandL : HandR, PawCenter, PawAxes, FVector(10.f, 10.f, 11.f));
+		Limb(Side == 0 ? UpperArmL : UpperArmR, UpperArm[Side], LowerArm[Side], 9.f);
+		Limb(Side == 0 ? LowerArmL : LowerArmR, LowerArm[Side], Hand[Side], 8.f);
+		Blob(Side == 0 ? HandL : HandR, PawCenter, PawAxes, FVector(14.f, 14.f, 15.f));
 	}
 
 	// ---- Legs (short and thick), flat feet
@@ -439,13 +481,13 @@ void AVulcanBoss::UpdateOtterBody()
 
 	for (int32 Side = 0; Side < 2; ++Side)
 	{
-		Limb(Side == 0 ? ThighL : ThighR, Thigh[Side], Calf[Side], 10.f);
-		Limb(Side == 0 ? CalfL : CalfR, Calf[Side], Foot[Side], 8.f);
+		Limb(Side == 0 ? ThighL : ThighR, Thigh[Side], Calf[Side], 14.f);
+		Limb(Side == 0 ? CalfL : CalfR, Calf[Side], Foot[Side], 11.f);
 
 		FVector FootDir = Ball[Side] - Foot[Side];
 		FootDir.Z = 0.f;
 		const FMatrix FootAxes = FRotationMatrix::MakeFromXZ(FootDir.IsNearlyZero() ? Fwd : FootDir, Up);
-		Blob(Side == 0 ? FootL : FootR, FMath::Lerp(Foot[Side], Ball[Side], 0.6f), FootAxes, FVector(20.f, 12.f, 8.f));
+		Blob(Side == 0 ? FootL : FootR, FMath::Lerp(Foot[Side], Ball[Side], 0.6f), FootAxes, FVector(26.f, 16.f, 11.f));
 	}
 
 	// ---- Tail: drapes to the ground behind and curls to the side. Lashes during Tail Lash.
@@ -453,7 +495,7 @@ void AVulcanBoss::UpdateOtterBody()
 	const bool bLashing = CurrentAttack == EVulcanAttack::TailLash;
 	const float SwayDegrees = bLashing ? FMath::Sin(OtterTime * 14.f) * 50.f : FMath::Sin(OtterTime * 2.5f) * 10.f;
 	const FQuat Sway(Up, FMath::DegreesToRadians(SwayDegrees));
-	const FVector TailRoot = Pelvis - (Fwd * 14.f + Up * 4.f) * S;
+	const FVector TailRoot = Pelvis - (Fwd * 18.f + Up * 4.f) * S;
 
 	auto TailPoint = [&](float BackCm, float SideCm, float Z)
 	{
@@ -466,15 +508,15 @@ void AVulcanBoss::UpdateOtterBody()
 	const FVector T2 = TailPoint(48.f, 6.f, GroundZ + 6.f * S);
 	const FVector T3 = TailPoint(56.f, 26.f, GroundZ + 4.f * S);
 
-	Limb(Tail0, TailRoot, T1, 9.f);
-	Limb(Tail1, T1, T2, 7.f);
-	Limb(Tail2, T2, T3, 5.f);
+	Limb(Tail0, TailRoot, T1, 12.f);
+	Limb(Tail1, T1, T2, 9.5f);
+	Limb(Tail2, T2, T3, 7.f);
 
 	// ---- Obsidian spikes: a ridge down the back, three volcano peaks on the head, two on the tail
 	const FVector BackLean = (-Fwd * 0.75f + Up * 0.65f);
 	const float BackT[4] = { 0.1f, 0.4f, 0.7f, 0.95f };
-	const float BackLength[4] = { 14.f, 20.f, 22.f, 16.f };
-	const float BackWidth[4] = { 9.f, 12.f, 13.f, 10.f };
+	const float BackLength[4] = { 17.f, 24.f, 26.f, 19.f };
+	const float BackWidth[4] = { 11.f, 14.f, 15.f, 12.f };
 	for (int32 k = 0; k < 4; ++k)
 	{
 		const FVector OnSpine = FMath::Lerp(Pelvis, NeckBone, BackT[k]);
@@ -482,24 +524,24 @@ void AVulcanBoss::UpdateOtterBody()
 		Spike(SpikeBack0 + k, Base, BackLean, BackLength[k], BackWidth[k]);
 	}
 
-	const float PeakSide[3] = { -6.f, 0.f, 6.f };
-	const float PeakLength[3] = { 10.f, 15.f, 10.f };
-	const float PeakWidth[3] = { 7.f, 9.f, 7.f };
+	const float PeakSide[3] = { -9.f, 0.f, 9.f };
+	const float PeakLength[3] = { 13.f, 19.f, 13.f };
+	const float PeakWidth[3] = { 9.f, 12.f, 9.f };
 	for (int32 k = 0; k < 3; ++k)
 	{
-		const FVector Base = HeadCenter + (HU * 18.f - HF * 2.f + HR * PeakSide[k]) * S;
-		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.07f) - HF * 0.3f, PeakLength[k], PeakWidth[k]);
+		const FVector Base = HeadCenter + (HU * 25.f - HF * 3.f + HR * PeakSide[k]) * S;
+		Spike(SpikeHead0 + k, Base, HU + HR * (PeakSide[k] * 0.05f) - HF * 0.3f, PeakLength[k], PeakWidth[k]);
 	}
 
 	const FVector TailLean = Up - Sway.RotateVector(Fwd) * 0.4f;
-	Spike(SpikeTail0, FMath::Lerp(TailRoot, T1, 0.6f) + Up * 6.f * S, TailLean, 12.f, 8.f);
-	Spike(SpikeTail1, FMath::Lerp(T1, T2, 0.5f) + Up * 4.f * S, TailLean, 9.f, 6.f);
+	Spike(SpikeTail0, FMath::Lerp(TailRoot, T1, 0.6f) + Up * 9.f * S, TailLean, 14.f, 10.f);
+	Spike(SpikeTail1, FMath::Lerp(T1, T2, 0.5f) + Up * 7.f * S, TailLean, 11.f, 8.f);
 
-	// ---- Lava glow from the chest, flickering. Brighter in phase 2.
+	// ---- Lava glow, flickering, out in front so it lights the floor rather than blowing out the body.
 	if (CoreGlow)
 	{
 		const float Flicker = 0.8f + 0.15f * FMath::Sin(OtterTime * 9.f) + 0.08f * FMath::Sin(OtterTime * 23.f);
-		CoreGlow->SetWorldLocation(FMath::Lerp(Pelvis, Spine, 0.5f) + Fwd * 35.f * S);
+		CoreGlow->SetWorldLocation(FMath::Lerp(Pelvis, Spine, 0.5f) + Fwd * 90.f * S);
 		CoreGlow->SetIntensity(CoreGlowIntensity * (bPhaseTwo ? 2.f : 1.f) * Flicker);
 	}
 }

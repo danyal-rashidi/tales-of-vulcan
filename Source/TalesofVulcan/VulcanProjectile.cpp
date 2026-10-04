@@ -90,14 +90,25 @@ void AVulcanProjectile::BeginPlay()
 	// Spin only the visuals; the collision root keeps flying straight.
 	Spin->SetUpdatedComponent(Mesh);
 
-	if (UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+	UMaterialInterface* BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!BaseMaterial)
+	{
+		BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	}
+	if (BaseMaterial)
 	{
 		UMaterialInstanceDynamic* Lava = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 		Lava->SetVectorParameterValue(TEXT("Color"), LavaColor);
+		Lava->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		Lava->SetScalarParameterValue(TEXT("Roughness"), 0.5f);
+		Lava->SetScalarParameterValue(TEXT("Glow"), 5.f);
 		Mesh->SetMaterial(0, Lava);
 
 		UMaterialInstanceDynamic* Crust = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 		Crust->SetVectorParameterValue(TEXT("Color"), CrustColor);
+		Crust->SetScalarParameterValue(TEXT("Metallic"), 0.3f);
+		Crust->SetScalarParameterValue(TEXT("Roughness"), 0.15f);
+		Crust->SetScalarParameterValue(TEXT("Glow"), 0.f);
 		for (UStaticMeshComponent* Patch : CrustPatches)
 		{
 			Patch->SetMaterial(0, Crust);

@@ -54,7 +54,7 @@ public:
 
 	/** Cooled volcanic rock. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
-	FLinearColor FurColor = FLinearColor(FColor(70, 16, 12));
+	FLinearColor FurColor = FLinearColor(FColor(120, 34, 22));
 
 	/** Belly — molten lava. Cools to black when Vulcan dies. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
@@ -71,15 +71,28 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
 	FLinearColor EyeColor = FLinearColor(FColor(12, 10, 10));
 
+	/** White highlight in the eyes. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(HideAlphaChannel))
-	FLinearColor LensColor = FLinearColor(FColor(222, 238, 246));
+	FLinearColor LensColor = FLinearColor(FColor(240, 240, 240));
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
 	bool bShowGlasses = true;
 
+	/** 0 = matte, 1 = full metal. Applies to fur, muzzle and ears. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0", ClampMax="1"))
+	float BodyMetallic = 0.8f;
+
+	/** 0 = mirror-shiny, 1 = dull. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0", ClampMax="1"))
+	float BodyRoughness = 0.25f;
+
+	/** How brightly the lava belly glows (needs the M_VulcanShape material). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0"))
+	float LavaGlow = 4.f;
+
 	/** Flickering lava light from the chest. Doubles in phase 2, goes out on death. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
-	float CoreGlowIntensity = 60.f;
+	float CoreGlowIntensity = 15.f;
 
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TArray<TObjectPtr<UStaticMeshComponent>> OtterParts;
