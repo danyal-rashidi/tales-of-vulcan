@@ -4,7 +4,20 @@
 #include "Engine/StaticMesh.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "HAL/IConsoleManager.h"
 #include "UObject/ConstructorHelpers.h"
+
+static TAutoConsoleVariable<float> CVarWeatherDensity(
+	TEXT("tov.WeatherDensity"),
+	1.f,
+	TEXT("Fraction of rain/sand particles drawn: 1 = all, 0.3 = light, 0 = weather off."),
+	ECVF_Scalability);
+
+static TAutoConsoleVariable<bool> CVarBloodRain(
+	TEXT("tov.BloodRain"),
+	false,
+	TEXT("Blood rain during Vulcan's storm. Off by default: it made the game unplayable on some PCs. Takes effect on the next Play."),
+	ECVF_Default);
 
 ADriftParticles::ADriftParticles()
 {
@@ -18,10 +31,21 @@ ADriftParticles::ADriftParticles()
 	Particles->SetGenerateOverlapEvents(false);
 	Particles->SetMobility(EComponentMobility::Movable);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	if (Sphere.Succeeded())
+	// Thousands of instances move every frame. Keep them out of Lumen, distance fields and ray tracing,
+	// which would otherwise be rebuilt around every particle each frame (the main cause of the lag).
+	Particles->bAffectDistanceFieldLighting = false;
+	Particles->bAffectDynamicIndirectLighting = false;
+	Particles->bVisibleInRayTracing = false;
+	Particles->bReceivesDecals = false;
+
+	// Streaks are a few cm thick, so a 12-triangle box looks the same as a full sphere.
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	CubeMesh = Cube.Object;
+	CylinderMesh = Cylinder.Object;
+	if (CubeMesh)
 	{
-		Particles->SetStaticMesh(Sphere.Object);
+		Particles->SetStaticMesh(CubeMesh);
 	}
 }
 
@@ -41,9 +65,23 @@ void ADriftParticles::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// The storm-driven weather is the blood rain, which is switched off unless tov.BloodRain is 1.
+	if (bWaitForStorm && !CVarBloodRain.GetValueOnGameThread())
+	{
+		SetActorTickEnabled(false);
+		SetActorHiddenInGame(true);
+		return;
+	}
+
 	if (bWaitForStorm)
 	{
 		Intensity = 0.f;
+	}
+
+	// Soft (translucent) wisps fade out at their silhouette, so they keep round sides; solid streaks use the box.
+	if (UStaticMesh* Mesh = CustomMaterial ? CylinderMesh.Get() : CubeMesh.Get())
+	{
+		Particles->SetStaticMesh(Mesh);
 	}
 
 	UMaterialInterface* Base = CustomMaterial ? CustomMaterial.Get()
@@ -89,6 +127,23 @@ void ADriftParticles::Tick(float DeltaSeconds)
 	}
 	Time += DeltaSeconds;
 
+	const float Density = FMath::Clamp(CVarWeatherDensity.GetValueOnGameThread(), 0.f, 1.f);
+	const int32 Visible = FMath::RoundToInt(N * FMath::Clamp(Intensity, 0.f, 1.f) * Density);
+
+	// Nothing to show (e.g. the rain before Vulcan's storm): hide it and skip all the per-particle work.
+	if (Visible == 0)
+	{
+		if (Particles->IsVisible())
+		{
+			Particles->SetVisibility(false);
+		}
+		return;
+	}
+	if (!Particles->IsVisible())
+	{
+		Particles->SetVisibility(true);
+	}
+
 	if (Material)
 	{
 		Material->SetVectorParameterValue(TEXT("Color"), Color);
@@ -101,8 +156,11 @@ void ADriftParticles::Tick(float DeltaSeconds)
 	const FVector Half = Area * 0.5f;
 	const FVector Anchor = GetActorLocation();
 	const bool bExclude = ExcludeEllipse.X > 0.f && ExcludeEllipse.Y > 0.f;
-	const int32 Visible = FMath::RoundToInt(N * FMath::Clamp(Intensity, 0.f, 1.f));
-	const FVector BaseScale = ParticleSize / 100.f; // engine sphere is 100 cm across
+	const FVector BaseScale = ParticleSize / 100.f; // engine basic shapes are 100 cm across
+
+	// Particles past the visible count already have zero scale; only touch them again when they switch off.
+	const int32 UpdateCount = FMath::Min(FMath::Max(Visible, LastVisible), N);
+	LastVisible = Visible;
 
 	auto Wrap = [](double Value, double HalfSize)
 	{
@@ -111,7 +169,7 @@ void ADriftParticles::Tick(float DeltaSeconds)
 		return (Value < 0.0 ? Value + Size : Value) - HalfSize;
 	};
 
-	for (int32 i = 0; i < N; ++i)
+	for (int32 i = 0; i < UpdateCount; ++i)
 	{
 		const float P = Phases[i];
 		const FVector Gust(FMath::Sin(Time * 1.3f + P), FMath::Sin(Time * 1.7f + P * 1.9f), 0.4f * FMath::Sin(Time * 2.1f + P * 0.7f));
@@ -139,5 +197,5 @@ void ADriftParticles::Tick(float DeltaSeconds)
 			bShow ? BaseScale * Sizes[i] : FVector::ZeroVector);
 	}
 
-	Particles->BatchUpdateInstancesTransforms(0, Transforms, true, true, true);
+	Particles->BatchUpdateInstancesTransforms(0, TArrayView<const FTransform>(Transforms.GetData(), UpdateCount), true, true, true);
 }

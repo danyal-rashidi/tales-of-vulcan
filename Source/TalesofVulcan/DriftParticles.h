@@ -6,11 +6,14 @@
 
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class UStaticMesh;
 
 /**
  * Lightweight weather: thousands of small stretched shapes (one instanced mesh) drifting
  * with the wind inside a box that wraps around. Used for the blood rain (follows the camera,
  * starts with Vulcan's storm) and for sand blowing across the desert outside the colosseum.
+ * Console: tov.WeatherDensity 0..1 thins it out on slow PCs (0 = off).
+ * The blood rain (bWaitForStorm) is off unless tov.BloodRain is 1.
  */
 UCLASS()
 class TALESOFVULCAN_API ADriftParticles : public AActor
@@ -94,6 +97,16 @@ private:
 	TArray<float> Sizes;
 	TArray<FTransform> Transforms;
 	float Time = 0.f;
+
+	/** How many particles were shown last update; the rest already have zero scale. */
+	int32 LastVisible = 0;
+
+	/** Cheap streak shapes: a box for solid streaks, a cylinder for soft (translucent) ones. */
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CubeMesh;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CylinderMesh;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> Material;
