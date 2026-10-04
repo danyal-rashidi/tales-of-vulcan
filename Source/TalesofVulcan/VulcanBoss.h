@@ -5,6 +5,7 @@
 #include "VulcanBoss.generated.h"
 
 class UAnimMontage;
+class UAnimSequenceBase;
 class UHealthComponent;
 class UMaterialInstanceDynamic;
 class UPointLightComponent;
@@ -78,6 +79,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
 	bool bShowGlasses = true;
 
+	/** Size of the head and everything on it (face, glasses, ears, head spikes). 1 = original. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0.25", ClampMax="4"))
+	float HeadScale = 2.f;
+
 	/** 0 = matte, 1 = full metal. Applies to fur, muzzle and ears. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body", meta=(ClampMin="0", ClampMax="1"))
 	float BodyMetallic = 0.8f;
@@ -94,7 +99,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Otter Body")
 	float CoreGlowIntensity = 15.f;
 
-	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	/** Not saved: levels saved with an older part list would otherwise stop the body from updating. */
+	UPROPERTY(VisibleAnywhere, Transient, Category="Vulcan|Otter Body")
 	TArray<TObjectPtr<UStaticMeshComponent>> OtterParts;
 
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
@@ -120,13 +126,36 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
 	float IntroTriggerRange = 1200.f;
 
-	/** Seconds of shaking between "statue notices you" and the transformation. */
+	/** Seconds of shaking before it comes alive. The storm rolls in over this time. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
-	float StatueAwakenTime = 2.5f;
+	float StatueAwakenTime = 4.f;
 
-	/** How violently it shakes while awakening (cm). */
+	/** A lightning bolt hits the statue when the player comes close, then it starts shaking. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
-	float AwakenShake = 4.f;
+	bool bLightningStrike = true;
+
+	/** Seconds the bolt flickers before the statue starts shaking. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float LightningStrikeTime = 0.7f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro", meta=(HideAlphaChannel))
+	FLinearColor LightningColor = FLinearColor(0.75f, 0.85f, 1.f);
+
+	/** How far the statue lurches while awakening (cm). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float AwakenShake = 10.f;
+
+	/** How far the statue rocks while awakening (degrees). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	float AwakenWobble = 4.f;
+
+	/** The player's camera rumbles like an earthquake from the lightning strike until it comes alive. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro")
+	bool bEarthquake = true;
+
+	/** Earthquake strength at its peak, just before it comes alive (1 = default). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro", meta=(ClampMin="0"))
+	float EarthquakeStrength = 1.f;
 
 	/** Used when there's no sculpture model: the otter body is tinted this. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Statue Intro", meta=(HideAlphaChannel))
@@ -139,9 +168,70 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Vulcan|Statue Intro")
 	void AwakenFromStatue();
 
+	/** Lightning hit the statue: thunder sound, sparks, camera shake. */
+	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
+	void OnStatueStruck(FVector StrikeLocation);
+
 	/** Statue starts shaking: crack sounds, dust, camera shake. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
 	void OnStatueAwakening();
+
+	// ---------------------------------------------------------------- Storm sky
+
+	/**
+	 * While the statue shakes, the level's sky fills with dark storm clouds and the sun
+	 * turns blood red, so the fight happens under that sky. Uses the level's Directional
+	 * Light, Sky Atmosphere, Volumetric Cloud and Exponential Height Fog (any can be missing).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	bool bStormSky = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(HideAlphaChannel))
+	FLinearColor BloodSunColor = FLinearColor(1.f, 0.02f, 0.008f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
+	float BloodSunIntensity = 5.f;
+
+	/** Sun angle during the fight (-90 = straight down). High enough to be seen above the stands. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	float StormSunPitch = -30.f;
+
+	/** Move the sun so it hangs in the sky behind Vulcan, as seen from where the player is standing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	bool bSunBehindVulcan = true;
+
+	/** Size of the glowing red sun in the sky (degrees across; the real sun is about 0.5). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
+	float BloodSunSize = 8.f;
+
+	/** How brightly the red sun glows. Above ~3 it washes out to orange/white on screen. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
+	float BloodSunGlow = 1.2f;
+
+	/** Degrees to the side of Vulcan, so his head doesn't hide the sun. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	float SunSideOffset = 25.f;
+
+	/** Multiplies the sky's brightness and color. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(HideAlphaChannel))
+	FLinearColor StormSkyTint = FLinearColor(0.6f, 0.12f, 0.09f);
+
+	/** Cloud cover during the fight. The level's sky is -0.2; values much above or below that clear the sky. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	float StormCloudCoverage = -0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm")
+	float StormCloudDensity = 0.015f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(HideAlphaChannel))
+	FLinearColor StormCloudColor = FLinearColor(0.05f, 0.035f, 0.035f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(HideAlphaChannel))
+	FLinearColor StormFogColor = FLinearColor(0.08f, 0.015f, 0.01f);
+
+	/** Fog thickness during the fight. The level's fog is thick enough to hide the clouds, so it thins out. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
+	float StormFogDensity = 0.004f;
 
 	/** Statue became the otter: burst of fire/smoke, roar. The fight starts right after. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
@@ -176,6 +266,41 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
 	TObjectPtr<UAnimMontage> DeathMontage;
+
+	// ---------------------------------------------------------------- Animations
+	// Mixamo animations retargeted to the mannequin (RTG_* assets). At BeginPlay each one
+	// is turned into a montage for any montage slot that is still empty, so no montage assets are needed.
+
+	/** Fight-start roar and Molten Breath. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> RoarAnimation;
+
+	/** Magma Dive take-off. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> JumpAnimation;
+
+	/** Magma Dive landing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> LandAnimation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> HitReactAnimation;
+
+	/** Holds its last frame (lies on the ground). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> DeathAnimation;
+
+	/** Played when the statue comes alive; Vulcan stands still for it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimMontage> RoarMontage;
+
+	/** Flinch when the player lands a hit between attacks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimMontage> HitReactMontage;
+
+	/** Seconds between flinches, so a combo can't stun-lock Vulcan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	float HitReactCooldown = 1.5f;
 
 	// ---------------------------------------------------------------- Phase 2 "Eruption"
 
@@ -388,18 +513,77 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
-	enum class EIntroState : uint8 { Statue, Awakening, Done };
+	enum class EIntroState : uint8 { Statue, Struck, Awakening, Done };
 	EIntroState IntroState = EIntroState::Done;
 	FTimerHandle IntroTimer;
 	FVector MeshRestLocation = FVector::ZeroVector;
 	FVector StatueRestLocation = FVector::ZeroVector;
+	FRotator MeshRestRotation = FRotator::ZeroRotator;
+	FRotator StatueRestRotation = FRotator::ZeroRotator;
+
+	TWeakObjectPtr<class UCameraShakeBase> Quake;
+	void SetQuakeStrength(float Scale);
+	void StopQuake();
 
 	void FreezeStatuePose();
+	void StrikeStatue();
+	void BeginShaking();
 	void FinishAwakening();
 	bool HasStatueModel() const;
 
+	// Lightning bolt: glowing cylinders from the sky to the statue + a flash light
+	void BuildBolt(const FVector& Target);
+	void FlickerBolt();
+	void ClearBolt();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> BoltParts;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UPointLightComponent> BoltFlash;
+
+	FTimerHandle BoltTimer;
+	float BoltEndTime = 0.f;
+
+	// Storm sky: level lighting captured when the statue is struck, then blended to the storm look
+	void CaptureSky();
+	void ApplyStorm(float Alpha);
+
+	TWeakObjectPtr<class UDirectionalLightComponent> Sun;
+	TWeakObjectPtr<class USkyAtmosphereComponent> Atmosphere;
+	TWeakObjectPtr<class UVolumetricCloudComponent> Clouds;
+	TWeakObjectPtr<class UExponentialHeightFogComponent> Fog;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> CloudMaterial;
+
+	bool bSkyCaptured = false;
+	FLinearColor SunStartColor = FLinearColor::White;
+	float SunStartIntensity = 0.f;
+	FRotator SunStartRotation = FRotator::ZeroRotator;
+	FRotator SunTargetRotation = FRotator::ZeroRotator;
+	float StormAlpha = 0.f;
+
+	/** Big glowing sun disk kept far away along the sun direction (the real one hides behind clouds). */
+	void UpdateBloodSun();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> BloodSunDisk;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> BloodSunMaterial;
+	FLinearColor SkyStartTint = FLinearColor::White;
+	FLinearColor FogStartColor = FLinearColor::White;
+	float FogStartDensity = 0.f;
+	float CloudStartCoverage = 0.f;
+	float CloudStartDensity = 0.f;
+	FLinearColor CloudStartAlbedo = FLinearColor::White;
+	FLinearColor CloudStartStormAlbedo = FLinearColor::White;
+
 	void ApplyOtterLook();
 	void UpdateOtterBody();
+	/** Re-finds the Otter_* components by name if OtterParts doesn't match the current part list. */
+	void RebindOtterParts();
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> OtterMaterials;
@@ -442,7 +626,13 @@ private:
 	UFUNCTION()
 	void HandleDeath(AActor* Killer);
 
+	/** Fills empty montage slots from the *Animation sequences. */
+	void BuildMontagesFromAnimations();
+
 	EVulcanAttack CurrentAttack = EVulcanAttack::None;
+	float LastHealth = -1.f;
+	float NextHitReactTime = 0.f;
+	FTimerHandle RoarTimer;
 	/** True when there's no nav mesh path, so Tick walks straight at the player instead. */
 	bool bDirectChase = false;
 	bool bFightActive = false;
