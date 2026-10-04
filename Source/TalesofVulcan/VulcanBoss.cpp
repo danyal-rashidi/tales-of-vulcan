@@ -2,17 +2,38 @@
 #include "HealthComponent.h"
 #include "VulcanProjectile.h"
 #include "AIController.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/SkeletalMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Kismet/GameplayStatics.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
 
 AVulcanBoss::AVulcanBoss()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+
+	// Stand-in body until the otter exists: the template mannequin. Override in BP_Vulcan.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> StandInMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+	if (StandInMesh.Succeeded())
+	{
+		GetMesh()->SetSkeletalMeshAsset(StandInMesh.Object);
+	}
+	static ConstructorHelpers::FClassFinder<UAnimInstance> StandInAnim(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed"));
+	if (StandInAnim.Succeeded())
+	{
+		GetMesh()->SetAnimInstanceClass(StandInAnim.Class);
+	}
+	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
+
+	// Boss-sized, and easy to tell apart from the player mannequin.
+	GetCapsuleComponent()->SetRelativeScale3D(FVector(1.6f));
 
 	HealthComponent = CreateDefaultSubobject<UHealthComponent>(TEXT("HealthComponent"));
 	HealthComponent->MaxHealth = 500.f;
@@ -57,8 +78,27 @@ void AVulcanBoss::StartFight()
 
 // ============================================================ Decision making
 
+void AVulcanBoss::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!bDirectChase || bDead || CurrentAttack != EVulcanAttack::None)
+	{
+		return;
+	}
+
+	if (APawn* Player = GetPlayer())
+	{
+		FVector ToPlayer = Player->GetActorLocation() - GetActorLocation();
+		ToPlayer.Z = 0.f;
+		AddMovementInput(ToPlayer.GetSafeNormal());
+	}
+}
+
 void AVulcanBoss::Think()
 {
+	bDirectChase = false;
+
 	if (bDead || !bFightActive || CurrentAttack != EVulcanAttack::None)
 	{
 		return;
@@ -93,9 +133,11 @@ void AVulcanBoss::Think()
 		return;
 	}
 
-	if (AI && Distance > MeleeRange * 0.8f)
+	if (Distance > MeleeRange * 0.8f)
 	{
-		AI->MoveToActor(Player, MeleeRange * 0.6f);
+		// Use the nav mesh if the level has one; otherwise walk straight at the player.
+		const bool bPathing = AI && AI->MoveToActor(Player, MeleeRange * 0.6f) != EPathFollowingRequestResult::Failed;
+		bDirectChase = !bPathing;
 	}
 }
 
