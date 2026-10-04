@@ -4,7 +4,9 @@
 #include "MeleeAttackComponent.h"
 #include "SpearGripComponent.h"
 #include "VulcanBoss.h"
+#include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Camera/CameraActor.h"
 #include "Components/CapsuleComponent.h"
@@ -27,7 +29,7 @@ bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	const TCHAR* CommandLine = FCommandLine::Get();
 	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
-		|| FParse::Param(CommandLine, TEXT("BossShot")))
+		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -53,6 +55,10 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("FireShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartFireShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossProbe, 2.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("BossShot")))
 	{
@@ -141,6 +147,54 @@ void UGroundCheckSubsystem::StartBossShot()
 	}
 	After(28.f, [Hit]() { Hit(100000.f); });
 	After(33.5f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartBossProbe()
+{
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> It(World);
+	AVulcanBoss* Boss = It ? *It : nullptr;
+	if (!Boss)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+
+	TWeakObjectPtr<AVulcanBoss> WeakBoss = Boss;
+	Boss->StartFight();
+
+	// Twice a second for 25 s: is the skeleton animating, what plays, how fast is Vulcan moving?
+	for (int32 i = 0; i < 50; ++i)
+	{
+		After(0.5f + i * 0.5f, [WeakBoss, i]()
+		{
+			AVulcanBoss* B = WeakBoss.Get();
+			USkeletalMeshComponent* Mesh = B ? B->GetMesh() : nullptr;
+			if (!Mesh)
+			{
+				return;
+			}
+			const UAnimInstance* Anim = Mesh->GetAnimInstance();
+			const UAnimMontage* Montage = Anim ? Anim->GetCurrentActiveMontage() : nullptr;
+			const FTransform ToActor = B->GetActorTransform();
+			auto Local = [&](const TCHAR* Bone) { return ToActor.InverseTransformPosition(Mesh->GetSocketLocation(Bone)); };
+
+			int32 VisibleParts = 0;
+			TArray<UStaticMeshComponent*> Parts;
+			B->GetComponents(Parts);
+			for (const UStaticMeshComponent* Part : Parts)
+			{
+				VisibleParts += Part->IsVisible() && Part->GetName().StartsWith(TEXT("Otter_")) ? 1 : 0;
+			}
+
+			UE_LOG(LogTemp, Warning, TEXT("[BossProbe] t=%4.1f speed=%5.0f paused=%d anim=%s montage=%s mesh visible=%d otter parts visible=%d foot_l=%s foot_r=%s hand_r=%s"),
+				i * 0.5f + 0.5f, B->GetVelocity().Size2D(), Mesh->bPauseAnims ? 1 : 0,
+				Anim ? *Anim->GetClass()->GetName() : TEXT("none"), Montage ? *Montage->GetName() : TEXT("-"),
+				Mesh->IsVisible() ? 1 : 0, VisibleParts,
+				*Local(TEXT("foot_l")).ToCompactString(), *Local(TEXT("foot_r")).ToCompactString(), *Local(TEXT("hand_r")).ToCompactString());
+		});
+	}
+	After(26.f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartFireShot()

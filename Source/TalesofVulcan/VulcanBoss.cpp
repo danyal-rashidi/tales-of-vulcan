@@ -185,6 +185,10 @@ void AVulcanBoss::BeginPlay()
 
 	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
 
+	// The mannequin is hidden behind the otter shapes, and a hidden skeletal mesh stops refreshing its
+	// bones by default, which froze the otter in one pose. Keep animating and updating bones regardless.
+	GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
 	HealthComponent->OnHealthChanged.AddDynamic(this, &AVulcanBoss::HandleHealthChanged);
 	HealthComponent->OnDeath.AddDynamic(this, &AVulcanBoss::HandleDeath);
 
