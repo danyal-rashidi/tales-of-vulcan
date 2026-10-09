@@ -2,6 +2,7 @@
 #include "GameAudio.h"
 #include "HealthComponent.h"
 #include "VulcanProjectile.h"
+#include "VulcanAnimInstance.h"
 #include "AIController.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -194,8 +195,40 @@ AVulcanBoss::AVulcanBoss()
 	HitReactAnimation = HitReact.Object;
 	DeathAnimation = Death.Object;
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
-	// Squash the skeleton: shorter legs and torso give the otter chunky, chibi proportions.
-	GetMesh()->SetRelativeScale3D(FVector(0.9f, 0.9f, 0.7f));
+
+	// The rigged otter model (Content/Vulcan/Otter) with its own animations, run by UVulcanAnimInstance.
+	// Without it, the mannequin above wears the shape otter instead.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> OtterModel(TEXT("/Game/Vulcan/Otter/SK_VulcanOtter.SK_VulcanOtter"));
+	if (OtterModel.Succeeded())
+	{
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterRoar(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Roar.A_VulcanOtter_Roar"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterDive(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Dive.A_VulcanOtter_Dive"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterEmerge(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Emerge.A_VulcanOtter_Emerge"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterHit(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_HitReact.A_VulcanOtter_HitReact"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterDeath(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Death.A_VulcanOtter_Death"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterTailLash(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_TailLash.A_VulcanOtter_TailLash"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterSpit(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Spit.A_VulcanOtter_Spit"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterBreath(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Breath.A_VulcanOtter_Breath"));
+		GetMesh()->SetSkeletalMeshAsset(OtterModel.Object);
+		GetMesh()->SetAnimInstanceClass(UVulcanAnimInstance::StaticClass());
+		bUseOtterBody = false;
+		RoarAnimation = OtterRoar.Object;
+		JumpAnimation = OtterDive.Object;
+		LandAnimation = OtterEmerge.Object;
+		HitReactAnimation = OtterHit.Object;
+		DeathAnimation = OtterDeath.Object;
+		TailLashAnimation = OtterTailLash.Object;
+		SpitAnimation = OtterSpit.Object;
+		BreathAnimation = OtterBreath.Object;
+	}
+	else
+	{
+		// Squash the skeleton: shorter legs and torso give the otter chunky, chibi proportions.
+		GetMesh()->SetRelativeScale3D(FVector(0.9f, 0.9f, 0.7f));
+	}
+
+	MouthPoint = CreateDefaultSubobject<USceneComponent>(TEXT("MouthPoint"));
+	MouthPoint->SetupAttachment(GetMesh(), TEXT("mouth"));
 
 	// Boss-sized, and easy to tell apart from the player mannequin.
 	GetCapsuleComponent()->SetRelativeScale3D(FVector(1.6f));
@@ -866,6 +899,25 @@ void AVulcanBoss::ApplyOtterLook()
 	{
 		CoreGlow->SetVisibility(bShowOtter && !bDead && !bStatue);
 	}
+
+	// The rigged model turns to polished bronze while it is a statue (M_VulcanOtter's Statue parameter).
+	USkeletalMeshComponent* Body = GetMesh();
+	if (!bUseOtterBody && Body)
+	{
+		for (int32 i = 0; i < Body->GetNumMaterials(); ++i)
+		{
+			UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(Body->GetMaterial(i));
+			if (!Material)
+			{
+				Material = Body->CreateAndSetMaterialInstanceDynamic(i);
+			}
+			if (Material)
+			{
+				Material->SetScalarParameterValue(TEXT("Statue"), bStatue && !bStatueModel ? 1.f : 0.f);
+				Material->SetVectorParameterValue(TEXT("StatueColor"), BronzeColor);
+			}
+		}
+	}
 }
 
 void AVulcanBoss::UpdateOtterBody()
@@ -1449,7 +1501,14 @@ void AVulcanBoss::Think()
 	if (Distance > MeleeRange * 0.8f)
 	{
 		// Use the nav mesh if the level has one; otherwise walk straight at the player.
+		// A refused move request also stops the character dead, and this runs every think, which made the
+		// straight chase stop and restart four times a second. Keep his speed when falling back to it.
+		const FVector ChaseVelocity = GetCharacterMovement()->Velocity;
 		const bool bPathing = AI && AI->MoveToActor(Player, MeleeRange * 0.6f) != EPathFollowingRequestResult::Failed;
+		if (!bPathing)
+		{
+			GetCharacterMovement()->Velocity = ChaseVelocity;
+		}
 		bDirectChase = !bPathing;
 	}
 }
@@ -1517,21 +1576,32 @@ bool AVulcanBoss::TryStartAttack(float DistanceToPlayer)
 		return false;
 	}
 
+	PerformAttack(Chosen);
+	return true;
+}
+
+void AVulcanBoss::PerformAttack(EVulcanAttack Attack)
+{
+	if (Attack == EVulcanAttack::None || bDead || !bFightActive || IntroState != EIntroState::Done || CurrentAttack != EVulcanAttack::None)
+	{
+		return;
+	}
+
 	if (AAIController* AI = Cast<AAIController>(GetController()))
 	{
 		AI->StopMovement();
 	}
 
-	CurrentAttack = Chosen;
+	CurrentAttack = Attack;
 	FacePlayer();
 
 	if (bShowDebug && GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Orange,
-			FString::Printf(TEXT("Vulcan: %s"), *UEnum::GetDisplayValueAsText(Chosen).ToString()));
+			FString::Printf(TEXT("Vulcan: %s"), *UEnum::GetDisplayValueAsText(Attack).ToString()));
 	}
 
-	switch (Chosen)
+	switch (Attack)
 	{
 	case EVulcanAttack::TailLash:     StartTailLash(); break;
 	case EVulcanAttack::ObsidianSpit: StartSpit();     break;
@@ -1539,8 +1609,6 @@ bool AVulcanBoss::TryStartAttack(float DistanceToPlayer)
 	case EVulcanAttack::MagmaDive:    StartDive();     break;
 	default: break;
 	}
-
-	return true;
 }
 
 void AVulcanBoss::FinishAttack()
@@ -1592,7 +1660,9 @@ void AVulcanBoss::SpitFire()
 	{
 		FacePlayer();
 
-		const FVector Muzzle = GetActorTransform().TransformPosition(SpitMuzzleOffset);
+		const FVector Muzzle = !bUseOtterBody && MouthPoint
+			? MouthPoint->GetComponentLocation()
+			: GetActorTransform().TransformPosition(SpitMuzzleOffset);
 		const FRotator BaseRotation = (Player->GetActorLocation() - Muzzle).Rotation();
 		GameAudio::Play(this, TEXT("Spit"), Muzzle, 1.6f, 0.7f, 6000.f);
 		const int32 Count = FMath::Max(1, bPhaseTwo ? PhaseTwoSpitShardCount : SpitShardCount);
@@ -1642,7 +1712,11 @@ void AVulcanBoss::BeginBreathing()
 	// The lava mouth part sits at the mouth in both otter forms (the awakened form's Muzzle is a face patch
 	// centred inside the head).
 	USceneComponent* Mouth = GetMesh();
-	if (OtterParts.IsValidIndex(OtterBody::Mouth) && OtterParts[OtterBody::Mouth])
+	if (!bUseOtterBody && MouthPoint)
+	{
+		Mouth = MouthPoint;
+	}
+	else if (OtterParts.IsValidIndex(OtterBody::Mouth) && OtterParts[OtterBody::Mouth])
 	{
 		Mouth = OtterParts[OtterBody::Mouth];
 	}
@@ -1946,7 +2020,9 @@ void AVulcanBoss::BuildMontagesFromAnimations()
 	};
 
 	if (!RoarMontage)      { RoarMontage = MakeMontage(RoarAnimation); }
-	if (!BreathMontage)    { BreathMontage = MakeMontage(RoarAnimation); }
+	if (!BreathMontage)    { BreathMontage = MakeMontage(BreathAnimation ? BreathAnimation.Get() : RoarAnimation.Get()); }
+	if (!TailLashMontage)  { TailLashMontage = MakeMontage(TailLashAnimation); }
+	if (!SpitMontage)      { SpitMontage = MakeMontage(SpitAnimation); }
 	if (!DiveMontage)      { DiveMontage = MakeMontage(JumpAnimation); }
 	if (!EmergeMontage)    { EmergeMontage = MakeMontage(LandAnimation); }
 	if (!HitReactMontage)  { HitReactMontage = MakeMontage(HitReactAnimation); }

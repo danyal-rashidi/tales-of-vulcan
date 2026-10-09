@@ -109,6 +109,10 @@ public:
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TObjectPtr<UPointLightComponent> CoreGlow;
 
+	/** Molten Breath and Obsidian Spit come out here: the rigged otter model's "mouth" bone. */
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
+	TObjectPtr<USceneComponent> MouthPoint;
+
 	/**
 	 * Once provoked (the statue awakens, the fight starts, or Vulcan gets hit) the original otter turns into the
 	 * awakened chibi otter: huge round head, a curved cream face pattern with chubby cheeks, a cream belly with a
@@ -273,8 +277,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
 	float AggroRange = 4000.f;
 
+	/** Chase speed (cm/s). A bit quicker than the player's 600 run, so he can't simply be outrun. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
-	float WalkSpeed = 400.f;
+	float WalkSpeed = 700.f;
 
 	/** Pause between attacks, in seconds. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|General")
@@ -312,6 +317,18 @@ public:
 	/** Holds its last frame (lies on the ground). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
 	TObjectPtr<UAnimSequenceBase> DeathAnimation;
+
+	/** Tail Lash: wind up, spin with the tail out. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> TailLashAnimation;
+
+	/** Obsidian Spit: rear back, snap the head forward. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> SpitAnimation;
+
+	/** Molten Breath: inhale, then hold the fire pose until the breath ends. Empty = RoarAnimation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
+	TObjectPtr<UAnimSequenceBase> BreathAnimation;
 
 	/** Played when the statue comes alive; Vulcan stands still for it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
@@ -487,6 +504,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Vulcan")
 	EVulcanAttack GetCurrentAttack() const { return CurrentAttack; }
+
+	/** Start this attack now, facing the player (tests, cutscenes). Ignored during another attack, the statue intro or death. */
+	UFUNCTION(BlueprintCallable, Category="Vulcan")
+	void PerformAttack(EVulcanAttack Attack);
 
 	// ---------------------------------------------------------------- Blueprint hooks (visuals / sound / UI)
 

@@ -12,6 +12,9 @@ public class TalesofVulcan : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "AudioMixer" }); // GroundCheckSubsystem records the game audio in test runs
 
+		PrivateDependencyModuleNames.Add("IKRig"); // ElvisAnimInstance retargets Quinn's pose onto Elvis
+		PrivateDependencyModuleNames.Add("AnimGraphRuntime"); // VulcanAnimInstance plays montages through a slot node
+
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 		

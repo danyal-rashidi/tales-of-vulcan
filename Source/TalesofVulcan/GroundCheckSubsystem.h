@@ -36,6 +36,8 @@ private:
 	void StartBossShot();
 	void StartBossProbe();
 	void StartLockShot();
+	void StartElvisShot();
+	void StartOtterShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);

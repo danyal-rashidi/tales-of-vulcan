@@ -1,4 +1,5 @@
 #include "GroundCheckSubsystem.h"
+#include "AIController.h"
 #include "DodgeComponent.h"
 #include "FireFX.h"
 #include "HealthComponent.h"
@@ -14,7 +15,9 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/DamageType.h"
 #include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -34,7 +37,8 @@ bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	const TCHAR* CommandLine = FCommandLine::Get();
 	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
-		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot")))
+		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot"))
+		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")))
 		&& Super::ShouldCreateSubsystem(Outer);
 }
 
@@ -69,6 +73,14 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossProbe, 2.f, false);
 	}
+	else if (FParse::Param(CommandLine, TEXT("OtterShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartOtterShot, 1.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("ElvisShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartElvisShot, 2.f, false);
+	}
 	else if (FParse::Param(CommandLine, TEXT("BossShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossShot, 2.f, false);
@@ -90,6 +102,9 @@ void UGroundCheckSubsystem::ShootFrom(const FVector& Location, const FVector& Lo
 	if (!ShotCamera)
 	{
 		ShotCamera = World->SpawnActor<ACameraActor>(Location, (LookAt - Location).Rotation());
+		// The camera jumps between shots; motion blur would smear every first frame.
+		ShotCamera->GetCameraComponent()->PostProcessSettings.bOverride_MotionBlurAmount = true;
+		ShotCamera->GetCameraComponent()->PostProcessSettings.MotionBlurAmount = 0.f;
 	}
 	ShotCamera->SetActorLocationAndRotation(Location, (LookAt - Location).Rotation());
 	Controller->SetViewTarget(ShotCamera);
@@ -331,6 +346,187 @@ void UGroundCheckSubsystem::Shot(const FString& Name)
 {
 	// Lock-on shots include the UI so the target dot shows.
 	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
+}
+
+void UGroundCheckSubsystem::StartOtterShot()
+{
+	// The rigged otter Vulcan, close up: statue, waking up, each attack, a flinch, death. The player can't die
+	// (a death would reload the level mid-run) and Vulcan only does the attacks asked for.
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> It(World);
+	AVulcanBoss* Boss = It ? *It : nullptr;
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	if (!Boss || !Player)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	if (UHealthComponent* PlayerHealth = Player->FindComponentByClass<UHealthComponent>())
+	{
+		PlayerHealth->bInvulnerable = true;
+	}
+
+	// Open sand (-ShotAtX= -ShotAtY=): Vulcan there, the player 6 m in front of him.
+	const TCHAR* CommandLine = FCommandLine::Get();
+	float AtX = -300.f, AtY = -1700.f;
+	FParse::Value(CommandLine, TEXT("ShotAtX="), AtX);
+	FParse::Value(CommandLine, TEXT("ShotAtY="), AtY);
+	Boss->SetActorLocationAndRotation(FVector(AtX, AtY, 320.f), FRotator::ZeroRotator, false, nullptr, ETeleportType::TeleportPhysics);
+	Player->SetActorLocationAndRotation(FVector(AtX + 600.f, AtY, 250.f), FRotator(0.f, 180.f, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	Boss->AggroRange = 1.f;
+
+	TWeakObjectPtr<AVulcanBoss> WeakBoss = Boss;
+	float Yaw = 40.f;
+	FParse::Value(CommandLine, TEXT("ShotYaw="), Yaw);
+	auto Film = [this, WeakBoss, Yaw](const FString& Name)
+	{
+		if (AVulcanBoss* B = WeakBoss.Get())
+		{
+			const FVector Target = B->GetActorLocation() + FVector(0.f, 0.f, 30.f);
+			ShootFrom(Target + B->GetActorForwardVector().RotateAngleAxis(Yaw, FVector::UpVector) * 520.f + FVector(0.f, 0.f, 90.f), Target);
+			// A fill light on the camera: the storm sky leaves him a silhouette otherwise.
+			if (ShotCamera && !ShotCamera->FindComponentByClass<UPointLightComponent>())
+			{
+				UPointLightComponent* Fill = NewObject<UPointLightComponent>(ShotCamera);
+				Fill->SetupAttachment(ShotCamera->GetRootComponent());
+				Fill->RegisterComponent();
+				Fill->SetIntensityUnits(ELightUnits::Candelas);
+				Fill->SetIntensity(600.f);
+				Fill->SetAttenuationRadius(2500.f);
+				Fill->SetCastShadows(false);
+			}
+		}
+		Shot(Name);
+	};
+	auto Attack = [WeakBoss](EVulcanAttack Which) { if (AVulcanBoss* B = WeakBoss.Get()) { B->PerformAttack(Which); } };
+	auto Hit = [WeakBoss, World](float Amount)
+	{
+		if (AVulcanBoss* B = WeakBoss.Get())
+		{
+			UGameplayStatics::ApplyDamage(B, Amount, UGameplayStatics::GetPlayerController(World, 0), UGameplayStatics::GetPlayerPawn(World, 0), UDamageType::StaticClass());
+		}
+	};
+	auto Burst = [this, Film](const TCHAR* Name, float Start, float Step, int32 Count)
+	{
+		for (int32 i = 0; i < Count; ++i)
+		{
+			const FString ShotName = FString::Printf(TEXT("otter_%s_%02d"), Name, i);
+			After(Start + i * Step, [Film, ShotName]() { Film(ShotName); });
+		}
+	};
+
+	Burst(TEXT("a_statue"), 0.6f, 0.3f, 2);
+	After(1.2f, [WeakBoss]() { if (AVulcanBoss* B = WeakBoss.Get()) { B->StartFight(); } });
+	if (FParse::Param(CommandLine, TEXT("OtterChase")))
+	{
+		// Run instead: no attacks, the player 22 m away along a line with nothing in Vulcan's way, Vulcan chases.
+		After(8.6f, [WeakBoss, Player, World]()
+		{
+			if (AVulcanBoss* B = WeakBoss.Get())
+			{
+				B->bEnableTailLash = B->bEnableSpit = B->bEnableBreath = B->bEnableDive = false;
+				B->AggroRange = 4000.f;
+				const UCapsuleComponent* Capsule = B->GetCapsuleComponent();
+				const FCollisionShape Shape = FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight() * 0.8f);
+				FCollisionQueryParams Params;
+				Params.AddIgnoredActor(B);
+				Params.AddIgnoredActor(Player);
+				const FVector Start = B->GetActorLocation() + FVector(0.f, 0.f, 20.f);
+				FVector Dir = FVector::XAxisVector;
+				for (int32 i = 0; i < 16; ++i)
+				{
+					const FVector Try = FVector::XAxisVector.RotateAngleAxis(i * 22.5f, FVector::UpVector);
+					FHitResult Hit;
+					if (!World->SweepSingleByChannel(Hit, Start, Start + Try * 2400.f, FQuat::Identity, ECC_Pawn, Shape, Params))
+					{
+						Dir = Try;
+						break;
+					}
+				}
+				Player->SetActorLocation(B->GetActorLocation() + Dir * 2200.f, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+		});
+		Burst(TEXT("z_chase"), 9.0f, 0.1f, 24);
+		for (float T = 9.f; T < 12.f; T += 0.5f)
+		{
+			After(T, [WeakBoss, Player, T]()
+			{
+				if (const AVulcanBoss* B = WeakBoss.Get())
+				{
+					const AAIController* AI = Cast<AAIController>(B->GetController());
+					UE_LOG(LogTemp, Warning, TEXT("[OtterChase] t=%.1f speed=%.0f statue=%d attack=%d dist=%.0f move=%d boss=%s player=%s"), T, B->GetVelocity().Size2D(),
+						B->IsStatue() ? 1 : 0, int32(B->GetCurrentAttack()), FVector::Dist2D(B->GetActorLocation(), Player->GetActorLocation()),
+						AI ? int32(AI->GetMoveStatus()) : -1, *B->GetActorLocation().ToCompactString(), *Player->GetActorLocation().ToCompactString());
+				}
+			});
+		}
+		After(13.2f, []() { FPlatformMisc::RequestExit(false); });
+		return;
+	}
+	Burst(TEXT("b_awaken"), 1.4f, 0.6f, 12);          // lightning, shaking, wake-up roar
+	After(9.2f, [Attack]() { Attack(EVulcanAttack::TailLash); });
+	Burst(TEXT("c_taillash"), 9.2f, 0.12f, 13);
+	After(11.6f, [Attack]() { Attack(EVulcanAttack::ObsidianSpit); });
+	Burst(TEXT("d_spit"), 11.6f, 0.12f, 10);
+	After(13.8f, [Attack]() { Attack(EVulcanAttack::MoltenBreath); });
+	Burst(TEXT("e_breath"), 13.8f, 0.35f, 12);
+	After(18.8f, [Attack]() { Attack(EVulcanAttack::MagmaDive); });
+	Burst(TEXT("f_dive"), 18.8f, 0.25f, 18);
+	After(24.0f, [Hit]() { Hit(5.f); });
+	Burst(TEXT("g_hit"), 24.0f, 0.15f, 5);
+	After(25.2f, [Hit]() { Hit(100000.f); });
+	Burst(TEXT("h_death"), 25.2f, 0.3f, 10);
+	After(28.8f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartElvisShot()
+{
+	// Elvis's cape through the moves that bend it most: a short run, a dodge roll, then dying.
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
+	if (!Player || !Controller)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+
+	// Open ground, facing +X (-ShotAtX= -ShotAtY= to pick another spot).
+	const TCHAR* CommandLine = FCommandLine::Get();
+	float AtX = 1200.f, AtY = 0.f;
+	FParse::Value(CommandLine, TEXT("ShotAtX="), AtX);
+	FParse::Value(CommandLine, TEXT("ShotAtY="), AtY);
+	Player->SetActorLocationAndRotation(FVector(AtX, AtY, Player->GetActorLocation().Z + 100.f), FRotator::ZeroRotator, false, nullptr, ETeleportType::TeleportPhysics);
+	Controller->SetControlRotation(FRotator::ZeroRotator);
+
+	// Film from behind and to the side so the cape shows.
+	float Yaw = 140.f;
+	float Distance = 380.f;
+	FParse::Value(CommandLine, TEXT("ShotYaw="), Yaw);
+	FParse::Value(CommandLine, TEXT("ShotDist="), Distance);
+	const FVector Target = Player->GetActorLocation() + FVector(0.f, 0.f, -20.f);
+	const FVector Offset = Player->GetActorForwardVector().RotateAngleAxis(Yaw, FVector::UpVector) * Distance + FVector(0.f, 0.f, 60.f);
+	ACameraActor* Camera = World->SpawnActor<ACameraActor>(Target + Offset, (-Offset).Rotation());
+	Camera->AttachToActor(Player, FAttachmentTransformRules::KeepWorldTransform);
+	Controller->SetViewTarget(Camera);
+
+	After(0.6f, [this]() { Shot(TEXT("elvis_idle")); });
+	for (int32 i = 0; i <= 20; ++i)
+	{
+		After(0.8f + i * 0.02f, [Player]() { Player->AddMovementInput(Player->GetActorForwardVector(), 1.f); });
+	}
+	After(1.0f, [this]() { Shot(TEXT("elvis_run")); });
+	After(1.24f, [Player]() { if (UDodgeComponent* Dodge = Player->FindComponentByClass<UDodgeComponent>()) { Dodge->TryDodge(); } });
+	for (int32 i = 1; i <= 10; ++i)
+	{
+		After(1.24f + i * 0.1f, [this, i]() { Shot(FString::Printf(TEXT("elvis_roll_%02d"), i)); });
+	}
+	After(3.0f, [Player, Controller]() { UGameplayStatics::ApplyDamage(Player, 100000.f, Controller, Player, UDamageType::StaticClass()); });
+	for (int32 i = 1; i <= 10; ++i)
+	{
+		After(3.0f + i * 0.3f, [this, i]() { Shot(FString::Printf(TEXT("elvis_death_%02d"), i)); });
+	}
+	After(6.4f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartSpearShot()
