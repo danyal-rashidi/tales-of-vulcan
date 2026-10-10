@@ -4,6 +4,8 @@
 #include "WindGrass.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/ExponentialHeightFog.h"
@@ -99,6 +101,16 @@ namespace ArenaLayout
 		return false;
 	}
 
+	/** The Rome map (a landscape around the colosseum) gets a bright, sun-baked look instead of the arena's grim one. */
+	bool IsOpenMap(UWorld& World)
+	{
+		for (TActorIterator<ALandscapeProxy> It(&World); It; ++It)
+		{
+			return true;
+		}
+		return false;
+	}
+
 	/** Point on the ellipse of the inner arena wall (Scale 1), or inside/outside it. */
 	FVector2D OnWall(float Degrees, float Scale)
 	{
@@ -178,13 +190,13 @@ void UArenaDressingSubsystem::SetupFog(UWorld& World)
 		float MaxOpacity = 0.95f;
 		// In the Rome map (a landscape around the colosseum) the haze is much thinner, so the desert, town and
 		// oasis can be seen across the 4 km map.
-		for (TActorIterator<ALandscapeProxy> Landscape(&World); Landscape; ++Landscape)
+		const bool bOpen = ArenaLayout::IsOpenMap(World);
+		if (bOpen)
 		{
 			Density = 0.035f;
 			Falloff = 0.3f;
 			Start = 3000.f;
 			MaxOpacity = 0.85f;
-			break;
 		}
 		const TCHAR* CommandLine = FCommandLine::Get();
 		FParse::Value(CommandLine, TEXT("ArenaFogDensity="), Density);
@@ -198,7 +210,7 @@ void UArenaDressingSubsystem::SetupFog(UWorld& World)
 		Fog->SetStartDistance(Start);
 		Fog->SetFogMaxOpacity(MaxOpacity);
 		// Dusty brown; the storm later turns it dark red from here.
-		Fog->SetFogInscatteringColor(FLinearColor(0.3f, 0.24f, 0.19f));
+		Fog->SetFogInscatteringColor(bOpen ? FLinearColor(0.42f, 0.5f, 0.62f) : FLinearColor(0.3f, 0.24f, 0.19f)); // clear-day blue in the open
 		return;
 	}
 }
@@ -452,9 +464,24 @@ void UArenaDressingSubsystem::SetupLighting(UWorld& World)
 			continue;
 		}
 		FRotator Angle = Sun->GetComponentRotation();
-		Angle.Pitch = -32.f;
+		const bool bOpen = ArenaLayout::IsOpenMap(World);
+		// In the open map a higher, whiter sun: a bright day with crisp shadows (the storm still takes it over).
+		Angle.Pitch = bOpen ? -50.f : -32.f;
 		Sun->SetWorldRotation(Angle);
-		Sun->SetLightColor(FLinearColor(1.f, 0.8f, 0.6f));
+		Sun->SetLightColor(bOpen ? FLinearColor(1.f, 0.92f, 0.8f) : FLinearColor(1.f, 0.8f, 0.6f));
+		if (bOpen)
+		{
+			Sun->SetIntensity(Sun->Intensity * 1.35f);
+			// Bright bounce light from the sky and sand, so shaded walls stay readable instead of going black.
+			for (TActorIterator<ASkyLight> Sky(&World); Sky; ++Sky)
+			{
+				if (USkyLightComponent* SkyLight = Sky->GetLightComponent())
+				{
+					SkyLight->SetIntensity(SkyLight->Intensity * 2.2f);
+					SkyLight->SetLowerHemisphereColor(FLinearColor(0.45f, 0.36f, 0.25f));
+				}
+			}
+		}
 		Sun->bEnableLightShaftBloom = true;
 		Sun->BloomScale = 0.25f;
 		Sun->BloomThreshold = 0.7f;
@@ -717,12 +744,20 @@ void UArenaDressingSubsystem::WeatherMaterials(UWorld& World)
 		const TCHAR* BaseMaterial;
 		FLinearColor Tint;
 	};
-	static const FLook Looks[] = {
+	static const FLook Grim[] = {
 		{ TEXT("M_ColosseumSandstone"), FLinearColor(0.5f, 0.47f, 0.43f) },
 		{ TEXT("M_RomanColumn"), FLinearColor(0.54f, 0.5f, 0.46f) },
 		{ TEXT("M_ArenaGround"), FLinearColor(0.44f, 0.4f, 0.36f) },
 		{ TEXT("M_Dunes"), FLinearColor(0.4f, 0.36f, 0.3f) },
 	};
+	// In the open map the same stone, sun-baked and warm.
+	static const FLook SunBaked[] = {
+		{ TEXT("M_ColosseumSandstone"), FLinearColor(0.86f, 0.78f, 0.66f) },
+		{ TEXT("M_RomanColumn"), FLinearColor(0.9f, 0.84f, 0.74f) },
+		{ TEXT("M_ArenaGround"), FLinearColor(0.78f, 0.7f, 0.58f) },
+		{ TEXT("M_Dunes"), FLinearColor(0.8f, 0.7f, 0.56f) },
+	};
+	const TArrayView<const FLook> Looks = ArenaLayout::IsOpenMap(World) ? TArrayView<const FLook>(SunBaked) : TArrayView<const FLook>(Grim);
 
 	UMaterialInterface* ColosseumStone = LoadObject<UMaterialInterface>(nullptr,
 		TEXT("/Game/ThirdPerson/Colosseum/MI_ColosseumSandstone.MI_ColosseumSandstone"), nullptr, LOAD_NoWarn | LOAD_Quiet);
@@ -811,8 +846,26 @@ void UArenaDressingSubsystem::ColorGrade(UWorld& World)
 		Volume->bUnbound = true;
 	}
 
-	// Dark-fantasy grade: drained colour, hard contrast, cold shadows, darker overall, vignette and grain.
 	FPostProcessSettings& Settings = Volume->Settings;
+	if (ArenaLayout::IsOpenMap(World))
+	{
+		// The open map: sun-drenched and saturated, warm light, clean shadows, barely any vignette or grain.
+		Settings.bOverride_ColorSaturation = true;
+		Settings.ColorSaturation = FVector4(1.12f, 1.1f, 1.08f, 1.f);
+		Settings.bOverride_ColorContrast = true;
+		Settings.ColorContrast = FVector4(1.08f, 1.08f, 1.08f, 1.f);
+		Settings.bOverride_ColorGain = true;
+		Settings.ColorGain = FVector4(1.03f, 1.f, 0.96f, 1.f);
+		Settings.bOverride_AutoExposureBias = true;
+		Settings.AutoExposureBias = 0.35f;
+		Settings.bOverride_VignetteIntensity = true;
+		Settings.VignetteIntensity = 0.3f;
+		Settings.bOverride_FilmGrainIntensity = true;
+		Settings.FilmGrainIntensity = 0.05f;
+		return;
+	}
+
+	// Dark-fantasy grade: drained colour, hard contrast, cold shadows, darker overall, vignette and grain.
 	Settings.bOverride_ColorSaturation = true;
 	Settings.ColorSaturation = FVector4(0.68f, 0.68f, 0.68f, 1.f);
 	Settings.bOverride_ColorContrast = true;

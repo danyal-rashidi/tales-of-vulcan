@@ -35,6 +35,8 @@
 #include "Engine/PointLight.h"
 #include "AssetCompilingManager.h"
 #include "RomeExitGate.h"
+#include "Engine/StaticMeshActor.h"
+#include "LandscapeHeightfieldCollisionComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/UObjectIterator.h"
 #include "Misc/CommandLine.h"
@@ -434,15 +436,62 @@ void UGroundCheckSubsystem::StartMapShot()
 	// The Rome map (L_Rome) from the air and from the ground: over the colosseum looking north to the town and
 	// temple hill, east to the oasis, south down the desert road, and standing outside the colosseum's north gate.
 	const FVector C(-44.f, -5.f, 0.f);
+	auto M = [&C](float X, float Y, float Z) { return C + FVector(X, Y, Z) * 100.f; };   // metres from the colosseum centre
+	// The temple, for the shots of its steps and its room (it faces +X; its room's floor is 3 m up).
+	FTransform Temple = FTransform(M(-396.f, 430.f, 14.f));
+	for (TActorIterator<AStaticMeshActor> It(GetWorld()); It; ++It)
+	{
+		if (It->GetStaticMeshComponent()->GetStaticMesh() && It->GetStaticMeshComponent()->GetStaticMesh()->GetName() == TEXT("SM_RomeTemple"))
+		{
+			Temple = It->GetActorTransform();
+		}
+	}
+	// A point Up metres above the ground at X, Y (metres from the colosseum centre), for street-level views.
+	auto G = [this, &M](float X, float Y, float Up)
+	{
+		const FVector Top = M(X, Y, 300.f);
+		FHitResult Hit;
+		const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Top, Top - FVector(0.f, 0.f, 60000.f), ECC_Visibility);
+		return (bHit ? Hit.ImpactPoint : M(X, Y, 0.f)) + FVector(0.f, 0.f, Up * 100.f);
+	};
+	for (const FVector2D& P : { FVector2D(0.f, 288.f), FVector2D(20.f, 400.f), FVector2D(20.f, 450.f), FVector2D(-100.f, 500.f), FVector2D(100.f, 520.f),
+		FVector2D(-200.f, 450.f), FVector2D(560.f, 170.f), FVector2D(170.f, 560.f) })
+	{
+		const FVector At = G(P.X, P.Y, 0.f);
+		FHitResult Hit;
+		TArray<FHitResult> Hits;
+		GetWorld()->LineTraceMultiByChannel(Hits, M(P.X, P.Y, 300.f), M(P.X, P.Y, -600.f), ECC_Visibility);
+		FString All;
+		for (const FHitResult& H : Hits) { All += FString::Printf(TEXT("%s@%.2f "), H.GetActor() ? *H.GetActor()->GetActorLabel() : TEXT("?"), H.ImpactPoint.Z / 100.f); }
+		GetWorld()->LineTraceSingleByChannel(Hit, M(P.X, P.Y, 300.f), M(P.X, P.Y, -600.f), ECC_Visibility);
+		UE_LOG(LogTemp, Display, TEXT("[MapShot] ground at (%.0f, %.0f) m: %.2f m (%s) all: %s"), P.X, P.Y, At.Z / 100.f, Hit.GetActor() ? *Hit.GetActor()->GetActorLabel() : TEXT("nothing"), *All);
+	}
+	// What covers a buried spot in the town: every mesh whose bounds hold it (collision or not).
+	{
+		const FVector Probe = M(20.f, 450.f, 6.f);
+		for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
+		{
+			if (It->GetWorld() == GetWorld() && It->IsRegistered() && It->Bounds.GetBox().IsInside(Probe) && !It->IsA<ULandscapeHeightfieldCollisionComponent>())
+			{
+				const UStaticMeshComponent* SM = Cast<UStaticMeshComponent>(*It);
+				UE_LOG(LogTemp, Display, TEXT("[MapShot] covering: %s / %s mesh %s visible %d collision %d at %s"), It->GetOwner() ? *It->GetOwner()->GetActorLabel() : TEXT("?"),
+					*It->GetName(), SM && SM->GetStaticMesh() ? *SM->GetStaticMesh()->GetName() : TEXT("-"), It->IsVisible(), (int32)It->GetCollisionEnabled(), *It->GetComponentLocation().ToString());
+			}
+		}
+	}
 	struct FView { const TCHAR* Name; FVector Eye; FVector Look; };
 	const FView Views[] = {
+		{ TEXT("map_town_air"), M(-170.f, 60.f, 110.f), M(0.f, 330.f, 0.f) },
+		{ TEXT("map_forum_top"), M(0.f, 300.f, 260.f), M(0.f, 330.f, 0.f) },
+		{ TEXT("map_cardo"), G(0.f, 70.f, 1.8f), G(0.f, 300.f, 3.f) },
+		{ TEXT("map_forum"), G(-38.f, 288.f, 1.8f), G(20.f, 360.f, 2.f) },
+		{ TEXT("map_street"), G(81.f, 160.f, 1.8f), G(81.f, 300.f, 2.f) },
+		{ TEXT("map_temple"), Temple.TransformPosition(FVector(5200.f, 1400.f, 900.f)), Temple.TransformPosition(FVector(0.f, 0.f, 700.f)) },
+		{ TEXT("map_temple_front"), Temple.TransformPosition(FVector(4600.f, -900.f, 450.f)), Temple.TransformPosition(FVector(1300.f, 0.f, 800.f)) },
+		{ TEXT("map_temple_inside"), Temple.TransformPosition(FVector(550.f, 250.f, 480.f)), Temple.TransformPosition(FVector(-1300.f, -100.f, 500.f)) },
 		{ TEXT("map_north"), C + FVector(0.f, -22000.f, 16000.f), C + FVector(0.f, 30000.f, 0.f) },
-		{ TEXT("map_high"), C + FVector(-60000.f, -60000.f, 70000.f), C },
-		{ TEXT("map_oasis"), C + FVector(40000.f, 6000.f, 1800.f), C + FVector(56000.f, 17000.f, -300.f) },
-		{ TEXT("map_oasis_shore"), C + FVector(47500.f, 13500.f, 900.f), C + FVector(58000.f, 18500.f, -150.f) },
-		{ TEXT("map_south"), C + FVector(0.f, -9000.f, 2500.f), C + FVector(0.f, -120000.f, 2000.f) },
 		{ TEXT("map_gate"), C + FVector(1200.f, 9000.f, 250.f), C + FVector(0.f, 3500.f, 700.f) },
-		{ TEXT("map_temple"), C + FVector(-20000.f, 20000.f, 2400.f), C + FVector(-39000.f, 43000.f, 1400.f) } };
+		{ TEXT("map_oasis"), C + FVector(40000.f, 6000.f, 1800.f), C + FVector(56000.f, 17000.f, -300.f) } };
 	float At = 0.2f;
 	for (const FView& View : Views)
 	{

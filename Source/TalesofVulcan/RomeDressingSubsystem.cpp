@@ -89,6 +89,26 @@ void URomeDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		return;
 	}
 
+	// In the Rome map the old dune backdrop would bury the town: sink it so only its far mountains show past the
+	// landscape's edge.
+	bool bLandscape = false;
+	for (TActorIterator<ALandscapeProxy> It(&InWorld); It && !bLandscape; ++It)
+	{
+		bLandscape = true;
+	}
+	if (bLandscape)
+	{
+		for (TActorIterator<AStaticMeshActor> It(&InWorld); It; ++It)
+		{
+			UStaticMeshComponent* Mesh = It->GetStaticMeshComponent();
+			if (RomeLayout::MeshName(Mesh) == RomeLayout::DunesMesh)
+			{
+				Mesh->SetMobility(EComponentMobility::Movable);
+				Mesh->AddWorldOffset(FVector(0.f, 0.f, -4000.f));
+			}
+		}
+	}
+
 	// Next frame, so ArenaDressingSubsystem has laid its sand floor and rubble to plant on.
 	InWorld.GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this, World = &InWorld]()
 	{
