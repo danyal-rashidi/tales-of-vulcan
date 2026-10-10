@@ -18,6 +18,8 @@
  * -LockShot     starts the fight, locks on to Vulcan and films from the player camera with UI: a roll,
  *               a jump and plunge (dust), a hit (boss bar), then Vulcan's death (victory banner). Also records
  *               the game audio to Saved/SpearShots/lock_audio.wav.
+ * -RomeShot     films RomeDressingSubsystem's pieces close up (banner, eagle standard, palm, the gate end).
+ * -DragonShot   stands the dragon beast (/Game/Dragon) in front of the player and films each of his animations.
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
@@ -25,6 +27,9 @@ class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
 	GENERATED_BODY()
 
 public:
+	/** True when the game was started with one of the flags above (the main menu then goes straight to the arena). */
+	static bool IsTestRun();
+
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
@@ -38,6 +43,8 @@ private:
 	void StartLockShot();
 	void StartElvisShot();
 	void StartOtterShot();
+	void StartRomeShot();
+	void StartDragonShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);

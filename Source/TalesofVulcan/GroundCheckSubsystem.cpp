@@ -26,20 +26,33 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformMisc.h"
+#include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Animation/SkeletalMeshActor.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/SkeletalMesh.h"
+#include "Components/PointLightComponent.h"
+#include "Engine/PointLight.h"
+#include "AssetCompilingManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "UObject/UObjectIterator.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Paths.h"
 #include "TimerManager.h"
 #include "UnrealClient.h"
 
-bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
+bool UGroundCheckSubsystem::IsTestRun()
 {
 	const TCHAR* CommandLine = FCommandLine::Get();
-	return (FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
+	return FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
 		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot"))
-		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")))
-		&& Super::ShouldCreateSubsystem(Outer);
+		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot"));
+}
+
+bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
+{
+	return IsTestRun() && Super::ShouldCreateSubsystem(Outer);
 }
 
 void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -72,6 +85,14 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossProbe, 2.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("DragonShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartDragonShot, 2.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("RomeShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartRomeShot, 2.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("OtterShot")))
 	{
@@ -346,6 +367,162 @@ void UGroundCheckSubsystem::Shot(const FString& Name)
 {
 	// Lock-on shots include the UI so the target dot shows.
 	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
+}
+
+void UGroundCheckSubsystem::StartDragonShot()
+{
+	// The dragon beast (/Game/Dragon), standing in front of the player so their sizes compare, playing each of his
+	// retargeted animations in turn: idle, walk, jog, the swipes and attacks, then death.
+	UWorld* World = GetWorld();
+	APawn* Player = UGameplayStatics::GetPlayerPawn(World, 0);
+	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Dragon/SK_DragonBeast.SK_DragonBeast"));
+	if (!Player || !Mesh)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	// Textures and shaders may still be building on a first run; film only once they're done.
+	FAssetCompilingManager::Get().FinishAllCompilation();
+	const FVector Forward = Player->GetActorForwardVector().GetSafeNormal2D();
+	FVector Base = Player->GetActorLocation() + Forward * 600.f;
+	FHitResult Hit;
+	if (World->LineTraceSingleByChannel(Hit, Base + FVector(0.f, 0.f, 300.f), Base - FVector(0.f, 0.f, 600.f), ECC_Visibility))
+	{
+		Base = Hit.ImpactPoint;
+	}
+	ASkeletalMeshActor* Dragon = World->SpawnActor<ASkeletalMeshActor>(Base, FRotator(0.f, (-Forward).Rotation().Yaw, 0.f));
+	if (!Dragon)
+	{
+		return;
+	}
+	USkeletalMeshComponent* Skin = Dragon->GetSkeletalMeshComponent();
+	Skin->SetMobility(EComponentMobility::Movable);
+	Skin->SetSkeletalMesh(Mesh);
+	Skin->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	// The mesh faces +Y in Unreal (made facing -Y in Blender), like the mannequin; turn it to face down the actor's +X.
+	Skin->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+	const FVector Facing = -Forward;
+	const FVector Side = FVector::CrossProduct(FVector::UpVector, Facing);
+	const FVector Chest = Base + FVector(0.f, 0.f, 130.f);
+
+	// A soft key light for the test, so his scales and textures show (the arena is dark here).
+	if (APointLight* Key = World->SpawnActor<APointLight>(Chest + Facing * 300.f + Side * 200.f + FVector(0.f, 0.f, 150.f), FRotator::ZeroRotator))
+	{
+		Key->PointLightComponent->SetMobility(EComponentMobility::Movable);
+		Key->PointLightComponent->SetIntensityUnits(ELightUnits::Candelas);
+		Key->PointLightComponent->SetIntensity(120.f);
+		Key->PointLightComponent->SetAttenuationRadius(1500.f);
+		Key->PointLightComponent->SetLightColor(FLinearColor(1.f, 0.85f, 0.7f));
+	}
+
+	// Size check first: side-on to him and the player together.
+	const FVector Between = (Base + Player->GetActorLocation()) * 0.5f;
+	After(0.2f, [this, Between, Side]() { ShootFrom(Between + Side * 950.f + FVector(0.f, 0.f, 150.f), Between + FVector(0.f, 0.f, 110.f)); });
+	After(0.8f, [this]() { Shot(TEXT("dragon_00_compare")); });
+
+	enum class EView : uint8 { Front, Side, Head };
+	struct FClip { const TCHAR* Name; float ShotAfter; EView View; };
+	const FClip Clips[] = { { TEXT("Idle"), 0.8f, EView::Front }, { TEXT("Idle"), 0.5f, EView::Head }, { TEXT("Walk"), 0.7f, EView::Side },
+		{ TEXT("Jog"), 0.6f, EView::Front }, { TEXT("Swipe"), 0.75f, EView::Front }, { TEXT("HeavySwipe"), 0.7f, EView::Front },
+		{ TEXT("SpinAttack"), 0.9f, EView::Front }, { TEXT("JumpAttack"), 1.0f, EView::Side }, { TEXT("Death"), 2.0f, EView::Front } };
+	float At = 1.0f;
+	int32 Index = 1;
+	for (const FClip& Clip : Clips)
+	{
+		UAnimSequence* Anim = LoadObject<UAnimSequence>(nullptr, *FString::Printf(TEXT("/Game/Dragon/Animations/A_DragonBeast_%s.A_DragonBeast_%s"), Clip.Name, Clip.Name));
+		if (!Anim)
+		{
+			continue;
+		}
+		const bool bLoop = FCString::Strcmp(Clip.Name, TEXT("Death")) != 0;
+		FVector Eye = Chest + Facing * 520.f + Side * 160.f;
+		FVector Look = Chest - FVector(0.f, 0.f, 20.f);
+		if (Clip.View == EView::Side)
+		{
+			Eye = Chest + Side * 560.f + Facing * 100.f;
+		}
+		else if (Clip.View == EView::Head)
+		{
+			Eye = Chest + FVector(0.f, 0.f, 70.f) + Facing * 190.f + Side * 60.f;
+			Look = Chest + FVector(0.f, 0.f, 85.f);
+		}
+		After(At, [this, Skin, Anim, bLoop, Eye, Look]()
+		{
+			Skin->PlayAnimation(Anim, bLoop);
+			// Nothing drives him yet, so play every move on the spot.
+			if (UAnimInstance* AnimInstance = Skin->GetAnimInstance())
+			{
+				AnimInstance->SetRootMotionMode(ERootMotionMode::IgnoreRootMotion);
+			}
+			ShootFrom(Eye, Look);
+		});
+		const FString ShotName = FString::Printf(TEXT("dragon_%02d_%s%s"), Index++, Clip.Name,
+			Clip.View == EView::Side ? TEXT("_side") : (Clip.View == EView::Head ? TEXT("_head") : TEXT("")));
+		After(At + Clip.ShotAfter, [this, ShotName]() { Shot(ShotName); });
+		At += Clip.ShotAfter + 0.4f;
+	}
+	After(At + 0.3f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartRomeShot()
+{
+	// Close-ups of RomeDressingSubsystem's pieces, found by mesh name: a banner (twice, to see it move), an eagle
+	// standard, a palm growing in the rubble, then the gate end of the arena.
+	UWorld* World = GetWorld();
+	auto Find = [World](const TCHAR* Prefix, FTransform& Out)
+	{
+		for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
+		{
+			if (It->GetWorld() != World || !It->GetStaticMesh() || !It->GetStaticMesh()->GetName().StartsWith(Prefix))
+			{
+				continue;
+			}
+			if (const UInstancedStaticMeshComponent* Instances = Cast<UInstancedStaticMeshComponent>(*It))
+			{
+				// The first instance inside the arena.
+				for (int32 i = 0; i < Instances->GetInstanceCount(); ++i)
+				{
+					FTransform Instance;
+					Instances->GetInstanceTransform(i, Instance, true);
+					if (FVector::Dist2D(Instance.GetLocation(), FVector(-44.f, -5.f, 0.f)) < 3300.f)
+					{
+						Out = Instance;
+						return true;
+					}
+				}
+				continue;
+			}
+			Out = It->GetComponentTransform();
+			return true;
+		}
+		return false;
+	};
+	FTransform Banner, Standard, Palm;
+	if (Find(TEXT("SM_BannerSPQR"), Banner))
+	{
+		const FVector Face = Banner.GetRotation().GetForwardVector();
+		const FVector Middle = Banner.GetLocation() - FVector(0.f, 0.f, 160.f);
+		After(0.2f, [this, Face, Middle]() { ShootFrom(Middle + Face * 520.f - FVector(0.f, 0.f, 20.f) + Face.Cross(FVector::UpVector) * 120.f, Middle); });
+		After(0.6f, [this]() { Shot(TEXT("rome_banner")); });
+		After(1.4f, [this]() { Shot(TEXT("rome_banner_b")); });
+	}
+	if (Find(TEXT("SM_EagleStandard"), Standard))
+	{
+		const FVector Top = Standard.GetLocation() + FVector(0.f, 0.f, 290.f);
+		const FVector Facing = Standard.GetRotation().GetForwardVector();
+		After(1.6f, [this, Top, Facing]() { ShootFrom(Top + Facing * 330.f - FVector(0.f, 0.f, 90.f) + Facing.Cross(FVector::UpVector) * 140.f, Top - FVector(0.f, 0.f, 40.f)); });
+		After(2.0f, [this]() { Shot(TEXT("rome_standard")); });
+	}
+	if (Find(TEXT("SM_DatePalm"), Palm))
+	{
+		const FVector Base = Palm.GetLocation();
+		const FVector ToCentre = (FVector(-44.f, -5.f, Base.Z) - Base).GetSafeNormal();
+		After(2.2f, [this, Base, ToCentre]() { ShootFrom(Base + ToCentre * 1500.f + FVector(0.f, 0.f, 260.f), Base + FVector(0.f, 0.f, 700.f)); });
+		After(2.6f, [this]() { Shot(TEXT("rome_palm")); });
+	}
+	After(2.8f, [this]() { ShootFrom(FVector(-44.f, -700.f, 260.f), FVector(-44.f, 2600.f, 250.f)); });
+	After(3.2f, [this]() { Shot(TEXT("rome_gate")); });
+	After(3.6f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartOtterShot()
