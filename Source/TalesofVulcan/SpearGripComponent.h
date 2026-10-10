@@ -65,6 +65,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spear Grip")
 	float MaxHandSpacing = 50.f;
 
+	/** Sheathed: the hands let go and something else places the spear (UPlayerEquipComponent puts it on the back). */
+	UPROPERTY(Transient, BlueprintReadWrite, Category="Spear Grip")
+	bool bHolstered = false;
+
+	/** Puts the spear with its middle at Center, shaft along Dir (toward the point), turned so its blade faces UpRef. */
+	void PlaceSpear(const FVector& Center, const FVector& Dir, const FVector& UpRef);
+
 	/** World-space ends of the spear shaft (back end and tip). Returns false if there is no spear. */
 	UFUNCTION(BlueprintPure, Category="Spear Grip")
 	bool GetSpearSegment(FVector& OutBack, FVector& OutTip) const;

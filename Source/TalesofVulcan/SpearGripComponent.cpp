@@ -86,8 +86,9 @@ void USpearGripComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 
 	UStaticMeshComponent* WeaponComponent = Weapon.Get();
 	USkeletalMeshComponent* HandsComponent = Hands.Get();
-	if (!WeaponComponent || !HandsComponent || Length <= 0.f)
+	if (!WeaponComponent || !HandsComponent || Length <= 0.f || bHolstered)
 	{
+		bHasHeld = bHasHeld && !bHolstered; // picked up again: grip it afresh
 		return;
 	}
 
@@ -153,4 +154,24 @@ bool USpearGripComponent::GetSpearSegment(FVector& OutBack, FVector& OutTip) con
 	OutBack = Center - Axis * (0.5f * Length);
 	OutTip = Center + Axis * (0.5f * Length);
 	return true;
+}
+
+void USpearGripComponent::PlaceSpear(const FVector& Center, const FVector& Dir, const FVector& UpRef)
+{
+	UStaticMeshComponent* WeaponComponent = Weapon.Get();
+	if (!WeaponComponent || Length <= 0.f)
+	{
+		return;
+	}
+	FVector Up = UpRef - Dir * FVector::DotProduct(UpRef, Dir);
+	if (!Up.Normalize())
+	{
+		Up = FMath::Abs(Dir.Z) < 0.9f ? FVector::UpVector : FVector::ForwardVector;
+	}
+	const FVector ShaftAxis = bFlipSpear ? -LocalAxis : LocalAxis;
+	const FQuat Target = FRotationMatrix::MakeFromXZ(Dir, Up).ToQuat();
+	const FQuat Local = FRotationMatrix::MakeFromXZ(ShaftAxis, LocalUp).ToQuat();
+	const FQuat Rotation = FQuat(Dir, FMath::DegreesToRadians(Roll)) * Target * Local.Inverse();
+	const FVector Scale = WeaponComponent->GetComponentScale();
+	WeaponComponent->SetWorldLocationAndRotation(Center - Rotation.RotateVector(LocalCenter * Scale), Rotation);
 }

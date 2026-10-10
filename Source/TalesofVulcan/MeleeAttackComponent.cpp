@@ -1,4 +1,5 @@
 #include "MeleeAttackComponent.h"
+#include "PlayerEquipComponent.h"
 #include "GameAudio.h"
 #include "StaminaComponent.h"
 #include "HealthComponent.h"
@@ -34,6 +35,20 @@ bool UMeleeAttackComponent::TryAttack()
 	if (!Move || Move->IsFalling())
 	{
 		return false;
+	}
+
+	// Spear on the back: the attack button draws it first.
+	if (UPlayerEquipComponent* Equip = Character->FindComponentByClass<UPlayerEquipComponent>())
+	{
+		if (!Equip->IsArmed())
+		{
+			Equip->Draw();
+			return false;
+		}
+		if (Equip->IsBusy())
+		{
+			return false;
+		}
 	}
 
 	// Light and heavy attack are two of these components; never let them overlap.

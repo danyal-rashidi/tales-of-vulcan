@@ -22,6 +22,10 @@
  * -DragonShot   stands the dragon beast (/Game/Dragon) in front of the player and films each of his animations.
  * -MapShot      the Rome map (start it with /Game/Rome/L_Rome on the command line) from the air and outside the gate.
  * -ExitShot     (in L_Rome) kills Vulcan, films the north gate opening, walks the player through and films outside.
+ * -MoveShot     (in L_Rome) drives the player down the street and films him from the side: standing with the spear on
+ *               his back, walking, jogging, sprinting, drawing the spear, armed jog, a jump, a turn, sheathing.
+ * -PropShot     (in L_Rome) close-ups of the street props (planters, baskets, amphorae).
+ * Add -ShotUI to any of them to keep the HUD in the screenshots.
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
@@ -49,11 +53,16 @@ private:
 	void StartDragonShot();
 	void StartMapShot();
 	void StartExitShot();
+	void StartMoveShot();
+	void StartPropShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);
 
 	FTimerHandle ReportTimer;
+	FTimerHandle MoveTimer;
+	FVector MoveInput = FVector::ZeroVector;     // -MoveShot: what the stick is doing
+	FVector FollowOffset = FVector::ZeroVector;  // -MoveShot: where the camera rides, relative to the player
 	TArray<FTimerHandle> ShotTimers;
 
 	UPROPERTY(Transient)

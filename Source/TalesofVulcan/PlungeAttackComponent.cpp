@@ -1,4 +1,5 @@
 #include "PlungeAttackComponent.h"
+#include "PlayerEquipComponent.h"
 #include "GameAudio.h"
 #include "SlamCameraShake.h"
 #include "StaminaComponent.h"
@@ -50,6 +51,10 @@ bool UPlungeAttackComponent::TryPlunge()
 	if (!Move || !Move->IsFalling())
 	{
 		return false;
+	}
+	if (const UPlayerEquipComponent* Equip = Character->FindComponentByClass<UPlayerEquipComponent>(); Equip && (!Equip->IsArmed() || Equip->IsBusy()))
+	{
+		return false; // no plunge with the spear on the back
 	}
 
 	// Too close to the floor? Trace down from the bottom of the capsule.

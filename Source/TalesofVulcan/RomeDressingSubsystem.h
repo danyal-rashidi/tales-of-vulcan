@@ -11,7 +11,9 @@
  * - desert ground cover on the arena floor (/Game/Rome/Ground): esparto grass, living and dead shrubs, pebbles,
  *   and photo-scanned rocks from the Kite demo pack; the centre platform is left open for the fight,
  * - red-and-gold SPQR banners hanging from the top of the arena wall (/Game/Rome/Props), billowing in the wind,
- * - four gold eagle standards (aquilae) with little SPQR flags: a pair at the gate, a pair facing them.
+ * - four gold eagle standards (aquilae) with little SPQR flags: a pair at the gate, a pair facing them,
+ * - in the Rome map, street life (/Game/Rome/Props/Detail, rprops.py): potted plants, pots, amphorae, baskets of
+ *   produce and grain sacks against the house fronts, and heaped around the forum's market stalls.
  * Placed one frame after play starts, on top of ArenaDressingSubsystem's sand floor and rubble.
  * Console: tov.RomeDressing 0 turns it off (takes effect on the next Play).
  */
@@ -28,4 +30,5 @@ private:
 	void DressGround(UWorld& World);
 	void HangBanners(UWorld& World);
 	void PlaceStandards(UWorld& World);
+	void DressStreets(UWorld& World);
 };

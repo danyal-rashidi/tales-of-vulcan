@@ -1,4 +1,5 @@
 #include "BossHUDWidget.h"
+#include "RomeUIStyle.h"
 #include "GameAudio.h"
 #include "HealthComponent.h"
 #include "Components/AudioComponent.h"
@@ -38,10 +39,7 @@ namespace BossHUD
 	{
 		UTextBlock* Block = Tree->ConstructWidget<UTextBlock>();
 		Block->SetText(FText::FromString(Text));
-		FSlateFontInfo Font = Block->GetFont();
-		Font.Size = Size;
-		Font.LetterSpacing = LetterSpacing;
-		Block->SetFont(Font);
+		Block->SetFont(RomeUIStyle::Cinzel(Size, false, LetterSpacing));
 		Block->SetColorAndOpacity(FSlateColor(Color));
 		Block->SetShadowOffset(FVector2D(2.f, 2.f));
 		Block->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.8f));
@@ -81,7 +79,11 @@ void UBossHUDWidget::NativeOnInitialized()
 		Layer->SetVerticalAlignment(VAlign_Fill);
 	}
 	BarSize->SetContent(Layers);
-	BarBox->AddChildToVerticalBox(BarSize);
+	UBorder* BarFrame = WidgetTree->ConstructWidget<UBorder>();
+	BarFrame->SetBrush(RomeUIStyle::Frame());
+	BarFrame->SetPadding(FMargin(5.f));
+	BarFrame->SetContent(BarSize);
+	BarBox->AddChildToVerticalBox(BarFrame);
 
 	UCanvasPanelSlot* BarSlot = Root->AddChildToCanvas(BarBox);
 	BarSlot->SetAnchors(FAnchors(0.5f, 1.f));

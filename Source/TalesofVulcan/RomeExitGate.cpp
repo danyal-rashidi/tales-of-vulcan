@@ -1,4 +1,5 @@
 #include "RomeExitGate.h"
+#include "RomeProgressSubsystem.h"
 #include "GameAudio.h"
 #include "HealthComponent.h"
 #include "VulcanBoss.h"
@@ -6,6 +7,7 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
@@ -36,6 +38,23 @@ void ARomeExitGate::BeginPlay()
 {
 	Super::BeginPlay();
 	Build();
+	Passage->OnComponentBeginOverlap.AddUniqueDynamic(this, &ARomeExitGate::HandlePassage);
+
+	if (bEntrance)
+	{
+		// Always open: no bars at all (raised, they'd stick out above the frame).
+		bOpening = true;
+		SetRaised(1.f);
+		Portcullis->SetVisibility(false, true);
+		const UGameInstance* Game = GetGameInstance();
+		const URomeProgressSubsystem* Progress = Game ? Game->GetSubsystem<URomeProgressSubsystem>() : nullptr;
+		if (Progress && Progress->bEnteredArena)
+		{
+			// Back from a death in the fight: start at the door (next tick, once the player has spawned).
+			GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &ARomeExitGate::ReturnPlayerToDoor));
+		}
+		return;
+	}
 
 	// Opens when Vulcan dies (listening to his health from outside his code).
 	for (TActorIterator<AVulcanBoss> It(GetWorld()); It; ++It)
@@ -45,7 +64,19 @@ void ARomeExitGate::BeginPlay()
 			Health->OnDeath.AddUniqueDynamic(this, &ARomeExitGate::HandleBossDeath);
 		}
 	}
-	Passage->OnComponentBeginOverlap.AddUniqueDynamic(this, &ARomeExitGate::HandlePassage);
+}
+
+void ARomeExitGate::ReturnPlayerToDoor()
+{
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(this, 0);
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
+	if (!Player || !Controller)
+	{
+		return;
+	}
+	const FRotator Facing(0.f, GetActorRotation().Yaw, 0.f);
+	Player->TeleportTo(GetActorTransform().TransformPosition(FVector(-700.f, 0.f, 120.f)), Facing);
+	Controller->SetControlRotation(Facing);
 }
 
 void ARomeExitGate::Build()
@@ -143,7 +174,12 @@ void ARomeExitGate::Tick(float DeltaSeconds)
 	{
 		return;
 	}
-	Raised = FMath::Min(Raised + DeltaSeconds / FMath::Max(RaiseSeconds, 0.1f), 1.f);
+	SetRaised(FMath::Min(Raised + DeltaSeconds / FMath::Max(RaiseSeconds, 0.1f), 1.f));
+}
+
+void ARomeExitGate::SetRaised(float Amount)
+{
+	Raised = Amount;
 	// Grinding up in small jolts, the way a heavy gate on a chain moves.
 	const float Eased = FMath::InterpEaseInOut(0.f, 1.f, Raised, 2.f);
 	const float Jolt = 6.f * FMath::Sin(Raised * 40.f) * (1.f - Raised);
@@ -165,6 +201,13 @@ void ARomeExitGate::HandlePassage(UPrimitiveComponent* Overlapped, AActor* Other
 		return;
 	}
 	bLeaving = true;
+	if (bEntrance)
+	{
+		if (URomeProgressSubsystem* Progress = GetGameInstance()->GetSubsystem<URomeProgressSubsystem>())
+		{
+			Progress->bEnteredArena = true;
+		}
+	}
 	Controller->PlayerCameraManager->StartCameraFade(0.f, 1.f, 0.8f, FLinearColor::Black, false, true);
 	TWeakObjectPtr<ARomeExitGate> WeakThis(this);
 	FTimerHandle Handle;

@@ -35,6 +35,7 @@
 #include "Engine/PointLight.h"
 #include "AssetCompilingManager.h"
 #include "RomeExitGate.h"
+#include "PlayerEquipComponent.h"
 #include "Engine/StaticMeshActor.h"
 #include "LandscapeHeightfieldCollisionComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -50,7 +51,7 @@ bool UGroundCheckSubsystem::IsTestRun()
 	return FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
 		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot"))
-		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot")) || FParse::Param(CommandLine, TEXT("MapShot")) || FParse::Param(CommandLine, TEXT("ExitShot"));
+		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot")) || FParse::Param(CommandLine, TEXT("MapShot")) || FParse::Param(CommandLine, TEXT("ExitShot")) || FParse::Param(CommandLine, TEXT("MoveShot")) || FParse::Param(CommandLine, TEXT("PropShot"));
 }
 
 bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -88,6 +89,14 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossProbe, 2.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("PropShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartPropShot, 5.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("MoveShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartMoveShot, 3.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("ExitShot")))
 	{
@@ -377,23 +386,29 @@ void UGroundCheckSubsystem::After(float Seconds, TFunction<void()> Action)
 void UGroundCheckSubsystem::Shot(const FString& Name)
 {
 	// Lock-on shots include the UI so the target dot shows.
-	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
+	const bool bUI = Name.StartsWith(TEXT("lock")) || FParse::Param(FCommandLine::Get(), TEXT("ShotUI"));
+	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), bUI, false);
 }
 
 void UGroundCheckSubsystem::StartExitShot()
 {
-	// The way out of the colosseum (L_Rome): Vulcan is killed, the north gate's portcullis rises, the player steps
-	// into it and comes out on the plaza outside, facing the town.
+	// The whole way through L_Rome: the player starts in the town, walks into the colosseum's entrance and comes
+	// out inside the arena; Vulcan is killed, the north gate's portcullis rises, the player steps into it and
+	// comes out on the plaza outside, where the storm clears.
 	UWorld* World = GetWorld();
 	TActorIterator<AVulcanBoss> BossIt(World);
 	AVulcanBoss* Boss = BossIt ? *BossIt : nullptr;
-	TActorIterator<ARomeExitGate> GateIt(World);
-	ARomeExitGate* Gate = GateIt ? *GateIt : nullptr;
+	ARomeExitGate* Gate = nullptr;
+	ARomeExitGate* Entrance = nullptr;
+	for (TActorIterator<ARomeExitGate> It(World); It; ++It)
+	{
+		(It->bEntrance ? Entrance : Gate) = *It;
+	}
 	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
 	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
-	if (!Boss || !Gate || !Player || !Controller)
+	if (!Boss || !Gate || !Entrance || !Player || !Controller)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ExitShot] boss %d gate %d player %d"), Boss != nullptr, Gate != nullptr, Player != nullptr);
+		UE_LOG(LogTemp, Warning, TEXT("[ExitShot] boss %d gate %d entrance %d player %d"), Boss != nullptr, Gate != nullptr, Entrance != nullptr, Player != nullptr);
 		FPlatformMisc::RequestExit(false);
 		return;
 	}
@@ -401,34 +416,145 @@ void UGroundCheckSubsystem::StartExitShot()
 	{
 		PlayerHealth->bInvulnerable = true;
 	}
-	Boss->StartFight();
+	UE_LOG(LogTemp, Display, TEXT("[ExitShot] player starts at %s"), *Player->GetActorLocation().ToString());
+	After(1.5f, [this]() { Shot(TEXT("exit_0_start")); });
+	// Walk up to the entrance, then into it.
+	const FVector In = Entrance->GetActorForwardVector();
+	After(2.0f, [Player, Controller, Entrance, In]()
+	{
+		Player->SetActorLocation(Entrance->GetActorLocation() - In * 700.f + FVector(0.f, 0.f, 120.f), false, nullptr, ETeleportType::TeleportPhysics);
+		Controller->SetControlRotation(In.Rotation());
+	});
+	After(3.5f, [this]() { Shot(TEXT("exit_1_entrance")); });
+	After(3.7f, [Player, Entrance, In]()
+	{
+		Player->SetActorLocation(Entrance->GetActorLocation() + In * 25.f + FVector(0.f, 0.f, 100.f), false, nullptr, ETeleportType::TeleportPhysics);
+	});
+	After(6.5f, [this, Player]()
+	{
+		UE_LOG(LogTemp, Display, TEXT("[ExitShot] inside at %s"), *Player->GetActorLocation().ToString());
+		Shot(TEXT("exit_2_inside"));
+	});
+
+	const float T0 = 7.f;
+	After(T0, [Boss]() { Boss->StartFight(); });
 	const FVector Into = Gate->GetActorForwardVector();
 	const FVector Front = Gate->GetActorLocation() - Into * 900.f + FVector(0.f, 0.f, 220.f);
 	const FVector Look = Gate->GetActorLocation() + FVector(0.f, 0.f, 220.f);
-	After(5.5f, [this, Front, Look]() { ShootFrom(Front, Look); });
-	After(6.0f, [this]() { Shot(TEXT("exit_0_shut")); });
-	After(6.2f, [World, Boss, Player]() { UGameplayStatics::ApplyDamage(Boss, 100000.f, UGameplayStatics::GetPlayerController(World, 0), Player, UDamageType::StaticClass()); });
-	After(11.0f, [this]() { Shot(TEXT("exit_1_rising")); });
-	After(14.5f, [this]() { Shot(TEXT("exit_2_open")); });
-	// Walk in: put the player just in front of the gate, then into the passage.
-	After(14.7f, [Player, Gate, Into]()
+	After(T0 + 5.5f, [this, Front, Look]() { ShootFrom(Front, Look); });
+	After(T0 + 6.0f, [this]() { Shot(TEXT("exit_3_shut")); });
+	After(T0 + 6.2f, [World, Boss, Player]() { UGameplayStatics::ApplyDamage(Boss, 100000.f, UGameplayStatics::GetPlayerController(World, 0), Player, UDamageType::StaticClass()); });
+	After(T0 + 11.0f, [this]() { Shot(TEXT("exit_4_rising")); });
+	After(T0 + 14.5f, [this]() { Shot(TEXT("exit_5_open")); });
+	// Walk out: put the player just in front of the gate, then into the passage.
+	After(T0 + 14.7f, [Player, Gate, Into]()
 	{
 		Player->SetActorLocation(Gate->GetActorLocation() - Into * 200.f + FVector(0.f, 0.f, 100.f), false, nullptr, ETeleportType::TeleportPhysics);
 	});
-	After(15.0f, [Player, Gate, Into]()
+	After(T0 + 15.0f, [Player, Gate, Into]()
 	{
 		Player->SetActorLocation(Gate->GetActorLocation() + Into * 25.f + FVector(0.f, 0.f, 100.f), false, nullptr, ETeleportType::TeleportPhysics);
 	});
-	After(17.5f, [Controller, Player]() { Controller->SetViewTarget(Player); });
-	After(18.5f, [this]() { Shot(TEXT("exit_3_outside")); });
-	After(18.7f, [this, Player]()
+	After(T0 + 17.5f, [Controller, Player]() { Controller->SetViewTarget(Player); });
+	After(T0 + 18.5f, [this]() { Shot(TEXT("exit_6_outside")); });
+	// The storm clears over SkyClearDelay + SkyClearSeconds after his death.
+	const float Cleared = T0 + 6.2f + Boss->SkyClearDelay + Boss->SkyClearSeconds + 1.f;
+	After(Cleared, [this, Player]()
 	{
 		const FVector At = Player->GetActorLocation();
 		UE_LOG(LogTemp, Display, TEXT("[ExitShot] player now at %s"), *At.ToString());
 		ShootFrom(At + FVector(-900.f, 1400.f, 700.f), At + FVector(0.f, -1500.f, 600.f));
 	});
-	After(19.2f, [this]() { Shot(TEXT("exit_4_around")); });
-	After(19.6f, []() { FPlatformMisc::RequestExit(false); });
+	After(Cleared + 0.5f, [this]() { Shot(TEXT("exit_7_clear")); });
+	After(Cleared + 1.0f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartMoveShot()
+{
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	UPlayerEquipComponent* Equip = Player ? Player->FindComponentByClass<UPlayerEquipComponent>() : nullptr;
+	if (!Player || !Equip)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[MoveShot] player %d equip %d"), Player != nullptr, Equip != nullptr);
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	const FVector Ahead = Player->GetActorForwardVector();
+	const FVector Side = FVector::CrossProduct(FVector::UpVector, Ahead);
+	MoveInput = FVector::ZeroVector;
+	FollowOffset = -Ahead * 260.f + Side * 220.f + FVector(0.f, 0.f, 40.f);
+	// Every frame: push the stick, and keep the camera riding alongside.
+	World->GetTimerManager().SetTimer(MoveTimer, FTimerDelegate::CreateWeakLambda(this, [this, Player]()
+	{
+		if (!MoveInput.IsNearlyZero())
+		{
+			Player->AddMovementInput(MoveInput.GetSafeNormal(), MoveInput.Size());
+		}
+		const FVector At = Player->GetActorLocation();
+		ShootFrom(At + FollowOffset, At + FVector(0.f, 0.f, 10.f));
+	}), 0.005f, true);
+	auto Log = [Player](const TCHAR* What)
+	{
+		UE_LOG(LogTemp, Display, TEXT("[MoveShot] %s: speed %.0f"), What, Player->GetVelocity().Size2D());
+	};
+	After(0.8f, [this]() { Shot(TEXT("move_0_idle")); });
+	After(1.0f, [this, Ahead, Side]() { FollowOffset = Side * 330.f + FVector(0.f, 0.f, 30.f); MoveInput = Ahead * 0.22f; });
+	After(2.6f, [this, Log]() { Log(TEXT("walk")); Shot(TEXT("move_1_walk")); });
+	After(2.8f, [this, Ahead]() { MoveInput = Ahead; });
+	After(4.2f, [this, Log]() { Log(TEXT("jog")); Shot(TEXT("move_2_jog")); });
+	After(4.3f, [Equip]() { Equip->SetSprintHeld(true); });
+	After(5.8f, [this, Log]() { Log(TEXT("sprint")); Shot(TEXT("move_3_sprint")); });
+	After(6.0f, [this, Equip]() { Equip->SetSprintHeld(false); MoveInput = FVector::ZeroVector; });
+	After(7.2f, [Equip]() { Equip->Draw(); });
+	After(7.55f, [this]() { Shot(TEXT("move_4_drawing")); });
+	After(8.6f, [this]() { Shot(TEXT("move_5_armed")); });
+	After(8.8f, [this, Ahead]() { MoveInput = Ahead; });
+	After(10.0f, [this, Log]() { Log(TEXT("armed jog")); Shot(TEXT("move_6_armed_jog")); });
+	After(10.1f, [this, Player]() { MoveInput = FVector::ZeroVector; Player->Jump(); });
+	After(10.4f, [this]() { Shot(TEXT("move_7_jump")); });
+	// A curve while jogging: the lean.
+	for (int32 i = 0; i < 40; ++i)
+	{
+		After(11.2f + i * 0.04f, [this, Ahead, i]() { MoveInput = Ahead.RotateAngleAxis(i * 3.f, FVector::UpVector); });
+	}
+	After(12.6f, [this, Log]() { Log(TEXT("turning")); Shot(TEXT("move_8_lean")); });
+	After(12.8f, [this]() { MoveInput = FVector::ZeroVector; });
+	After(13.6f, [Equip]() { Equip->Sheathe(); });
+	After(14.05f, [this]() { Shot(TEXT("move_9_sheathing")); });
+	After(15.0f, [this, Player]() { FollowOffset = -Player->GetActorForwardVector() * 190.f + FVector(0.f, 0.f, 50.f); });
+	After(15.3f, [this]() { Shot(TEXT("move_10_back")); });
+	After(15.8f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartPropShot()
+{
+	// One instance of each kind of street prop, filmed close from a three-quarter view.
+	TArray<FTransform> Spots;
+	TArray<FString> Names;
+	for (TObjectIterator<UInstancedStaticMeshComponent> It; It; ++It)
+	{
+		if (It->GetWorld() != GetWorld() || !It->GetStaticMesh() || It->GetInstanceCount() < 3)
+		{
+			continue;
+		}
+		const FString Name = It->GetStaticMesh()->GetName();
+		if (Name.StartsWith(TEXT("SM_RomePlanter")) || Name.StartsWith(TEXT("SM_RomeBasket")) || Name.StartsWith(TEXT("SM_RomeAmphorae")) || Name.StartsWith(TEXT("SM_RomePot")))
+		{
+			FTransform T;
+			It->GetInstanceTransform(2, T, true);
+			Spots.Add(T);
+			Names.Add(Name);
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("[PropShot] %d kinds"), Spots.Num());
+	for (int32 i = 0; i < FMath::Min(Spots.Num(), 6); ++i)
+	{
+		const FVector At = Spots[i].GetLocation() + FVector(0.f, 0.f, 35.f);
+		After(0.5f + i * 1.5f, [this, At]() { ShootFrom(At + FVector(110.f, -90.f, 60.f), At); });
+		After(1.4f + i * 1.5f, [this, Name = Names[i]]() { Shot(TEXT("prop_") + Name); });
+	}
+	After(1.0f + FMath::Min(Spots.Num(), 6) * 1.5f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartMapShot()

@@ -5,6 +5,8 @@
 #include "MainMenuWidget.h"
 #include "ElvisAnimInstance.h"
 #include "PlayerHUDWidget.h"
+#include "RomeProgressSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
@@ -68,6 +70,12 @@ AMainMenuGameMode::AMainMenuGameMode()
 void AMainMenuGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Back at the menu: the next game starts from the beginning.
+	if (URomeProgressSubsystem* Progress = GetGameInstance()->GetSubsystem<URomeProgressSubsystem>())
+	{
+		Progress->Reset();
+	}
 
 	// Test runs (-EnvShot, -OtterShot, ...) want the arena, not the menu.
 	if (UGroundCheckSubsystem::IsTestRun())

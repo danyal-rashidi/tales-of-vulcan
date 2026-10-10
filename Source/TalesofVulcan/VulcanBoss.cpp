@@ -1429,6 +1429,14 @@ void AVulcanBoss::Tick(float DeltaSeconds)
 		ApplyStorm(FMath::SmoothStep(0.f, 1.f, Progress));
 	}
 
+	// Once he's dead the storm passes and the sky clears.
+	if (bDead && StormAlpha > 0.f)
+	{
+		DeadTime += DeltaSeconds;
+		const float Clear = FMath::Clamp((DeadTime - SkyClearDelay) / FMath::Max(SkyClearSeconds, 0.1f), 0.f, 1.f);
+		ApplyStorm(1.f - FMath::SmoothStep(0.f, 1.f, Clear));
+	}
+
 	if (StormAlpha > 0.f)
 	{
 		UpdateBloodSun();

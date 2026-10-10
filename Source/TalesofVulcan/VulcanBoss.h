@@ -256,6 +256,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
 	float StormFogDensity = 0.004f;
 
+	/** Once Vulcan is dead the storm passes: after this many seconds the sky starts clearing... */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0"))
+	float SkyClearDelay = 3.f;
+
+	/** ...and takes this long to return to how it was before he woke. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Storm", meta=(ClampMin="0.1"))
+	float SkyClearSeconds = 12.f;
+
 	/** Statue became the otter: burst of fire/smoke, roar. The fight starts right after. */
 	UFUNCTION(BlueprintImplementableEvent, Category="Vulcan|Events")
 	void OnStatueTransformed();
@@ -608,6 +616,9 @@ private:
 	FRotator SunStartRotation = FRotator::ZeroRotator;
 	FRotator SunTargetRotation = FRotator::ZeroRotator;
 	float StormAlpha = 0.f;
+
+	/** Seconds since Vulcan died, for clearing the sky. */
+	float DeadTime = 0.f;
 
 	/** Big glowing sun disk kept far away along the sun direction (the real one hides behind clouds). */
 	void UpdateBloodSun();

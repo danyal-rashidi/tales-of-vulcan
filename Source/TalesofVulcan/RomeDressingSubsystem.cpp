@@ -1,4 +1,5 @@
 #include "RomeDressingSubsystem.h"
+#include "RomeExitGate.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -116,6 +117,7 @@ void URomeDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		DressGround(*World);
 		HangBanners(*World);
 		PlaceStandards(*World);
+		DressStreets(*World);
 	}));
 }
 
@@ -179,6 +181,11 @@ void URomeDressingSubsystem::DressGround(UWorld& World)
 	for (TActorIterator<APlayerStart> It(&World); It; ++It)
 	{
 		KeepClear.Add(It->GetActorLocation());
+	}
+	// ...and so do the spots the colosseum's gates bring the player out at (L_Rome).
+	for (TActorIterator<ARomeExitGate> It(&World); It; ++It)
+	{
+		KeepClear.Add(It->GetActorTransform().TransformPosition(It->ExitLocation));
 	}
 	auto FloorPoint = [&](float MinFraction, float MaxFraction, FVector& OutGround, float& OutAngle)
 	{
@@ -367,6 +374,25 @@ void URomeDressingSubsystem::PlantPalms(UWorld& World)
 		return Dunes && Dunes->LineTraceComponent(Hit, FVector(Point, 30000.f), FVector(Point, -5000.f), Params) ? float(Hit.ImpactPoint.Z) : 0.f;
 	};
 
+	// Nothing grows in a gateway or where a gate lets the player out.
+	TArray<FVector2D> GateSpots;
+	for (TActorIterator<ARomeExitGate> It(&World); It; ++It)
+	{
+		GateSpots.Add(FVector2D(It->GetActorLocation()));
+		GateSpots.Add(FVector2D(It->GetActorTransform().TransformPosition(It->ExitLocation)));
+	}
+	auto NearGate = [&GateSpots](const FVector2D& Point)
+	{
+		for (const FVector2D& Spot : GateSpots)
+		{
+			if (FVector2D::DistSquared(Point, Spot) < FMath::Square(900.f))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
 	// Groves hugging the outside of the colosseum. They are 21-27 m tall so the crowns clear the 17.5 m rim
 	// as seen from the arena floor. Bases sink into the sand, since the dunes' collision is only approximate.
 	const int32 Groves = 11;
@@ -377,6 +403,10 @@ void URomeDressingSubsystem::PlantPalms(UWorld& World)
 		for (int32 i = 0; i < Count; ++i)
 		{
 			const FVector2D Point = RomeLayout::OnEllipse(GroveAngle + Random.FRandRange(-7.f, 7.f), RomeLayout::OuterRadii, Random.FRandRange(1.06f, 1.3f));
+			if (NearGate(Point))
+			{
+				continue;
+			}
 			AddPalm(FVector(Point, DuneHeight(Point) - 150.f), Random.FRandRange(1.2f, 1.5f), 2);
 		}
 	}
@@ -634,4 +664,111 @@ void URomeDressingSubsystem::PlaceStandards(UWorld& World)
 		Shaft->SetCanEverAffectNavigation(false);
 		Shaft->RegisterComponent();
 	}
+}
+
+void URomeDressingSubsystem::DressStreets(UWorld& World)
+{
+	// Only the Rome map has a town.
+	if (!TActorIterator<ALandscapeProxy>(&World))
+	{
+		return;
+	}
+	auto Load = [](const FString& Name) { return LoadObject<UStaticMesh>(nullptr, *FString::Printf(TEXT("/Game/Rome/Props/Detail/%s.%s"), *Name, *Name), nullptr, LOAD_NoWarn | LOAD_Quiet); };
+	// What stands against a house front, with how often it's picked.
+	TArray<TPair<UStaticMesh*, float>> FrontProps;
+	for (int32 i = 1; i <= 6; ++i) { FrontProps.Add({ Load(FString::Printf(TEXT("SM_RomePlanter_%02d"), i)), 1.f }); }
+	for (int32 i = 1; i <= 3; ++i) { FrontProps.Add({ Load(FString::Printf(TEXT("SM_RomePot_%02d"), i)), 0.8f }); }
+	FrontProps.Add({ Load(TEXT("SM_RomeAmphora_01")), 1.f });
+	FrontProps.Add({ Load(TEXT("SM_RomeAmphorae_01")), 0.8f });
+	TArray<UStaticMesh*> Market;
+	for (int32 i = 1; i <= 5; ++i) { Market.Add(Load(FString::Printf(TEXT("SM_RomeBasket_%02d"), i))); }
+	Market.Add(Load(TEXT("SM_RomeSack_01")));
+	Market.Add(Load(TEXT("SM_RomeSack_02")));
+	Market.Add(Load(TEXT("SM_RomeAmphorae_01")));
+	FrontProps.RemoveAll([](const TPair<UStaticMesh*, float>& P) { return P.Key == nullptr; });
+	Market.RemoveAll([](const UStaticMesh* M) { return M == nullptr; });
+	if (FrontProps.IsEmpty())
+	{
+		return;
+	}
+	float TotalWeight = 0.f;
+	for (const TPair<UStaticMesh*, float>& P : FrontProps) { TotalWeight += P.Value; }
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Holder = World.SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SpawnParams);
+	USceneComponent* Root = NewObject<USceneComponent>(Holder);
+	Holder->SetRootComponent(Root);
+	Root->RegisterComponent();
+	TMap<UStaticMesh*, UInstancedStaticMeshComponent*> Instancers;
+	auto Add = [&](UStaticMesh* Mesh, const FTransform& Transform)
+	{
+		UInstancedStaticMeshComponent*& Instancer = Instancers.FindOrAdd(Mesh);
+		if (!Instancer)
+		{
+			Instancer = NewObject<UInstancedStaticMeshComponent>(Holder);
+			Instancer->SetStaticMesh(Mesh);
+			Instancer->SetupAttachment(Root);
+			Instancer->SetCollisionProfileName(TEXT("BlockAll"));
+			Instancer->SetCanEverAffectNavigation(false);
+			Instancer->RegisterComponent();
+		}
+		Instancer->AddInstance(Transform, /*bWorldSpace=*/true);
+	};
+
+	FRandomStream Random(2718);
+	int32 Count = 0;
+	for (TActorIterator<AStaticMeshActor> It(&World); It; ++It)
+	{
+		const UStaticMeshComponent* MeshComponent = It->GetStaticMeshComponent();
+		const UStaticMesh* Mesh = MeshComponent ? MeshComponent->GetStaticMesh() : nullptr;
+		if (!Mesh)
+		{
+			continue;
+		}
+		const FString Name = Mesh->GetName();
+		const FTransform Frame = It->GetActorTransform();
+		const FBox Box = Mesh->GetBoundingBox();
+		if (Name.StartsWith(TEXT("SM_RomeHouse_")))
+		{
+			// The front faces local -Y: a few things stand against it, clear of the corners.
+			const int32 Items = Random.FRand() < 0.55f ? Random.RandRange(1, 3) : 0;
+			const float Half = Box.GetExtent().X - 80.f;
+			if (Half < 60.f)
+			{
+				continue;
+			}
+			const float At = Random.FRandRange(-Half, Half);
+			for (int32 i = 0; i < Items; ++i)
+			{
+				float Pick = Random.FRandRange(0.f, TotalWeight);
+				UStaticMesh* Prop = FrontProps[0].Key;
+				for (const TPair<UStaticMesh*, float>& P : FrontProps)
+				{
+					Pick -= P.Value;
+					if (Pick <= 0.f)
+					{
+						Prop = P.Key;
+						break;
+					}
+				}
+				const FVector Local(FMath::Clamp(At + i * 75.f, -Half, Half), Box.Min.Y - Random.FRandRange(35.f, 55.f), 0.f);
+				const FRotator Turn(0.f, Random.FRandRange(0.f, 360.f), 0.f);
+				Add(Prop, FTransform(Turn, Frame.TransformPosition(Local), FVector(Random.FRandRange(0.9f, 1.1f))));
+				++Count;
+			}
+		}
+		else if (Name.StartsWith(TEXT("SM_RomeStall_")) && !Market.IsEmpty())
+		{
+			// Produce heaped around the market stalls.
+			for (int32 i = 0, n = Random.RandRange(2, 4); i < n; ++i)
+			{
+				const float Side = Random.FRand() < 0.5f ? -1.f : 1.f;
+				const FVector Local(Side * Random.FRandRange(200.f, 250.f), Random.FRandRange(-120.f, 120.f), 0.f);
+				Add(Market[Random.RandRange(0, Market.Num() - 1)], FTransform(FRotator(0.f, Random.FRandRange(0.f, 360.f), 0.f), Frame.TransformPosition(Local)));
+				++Count;
+			}
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("RomeDressing: %d street props"), Count);
 }

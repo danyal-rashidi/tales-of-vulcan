@@ -9,9 +9,11 @@ class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
 
 /**
- * The way out of the colosseum in the Rome map (placed in L_Rome at the north gate): an iron portcullis in a
- * stone frame against the arena wall, darkness behind it. It stays shut until Vulcan dies, then grinds open;
- * walking through fades to black and brings the player out at ExitLocation outside the colosseum.
+ * A gate in the colosseum (placed in L_Rome): an iron portcullis in a stone frame against a wall, darkness
+ * behind it; walking through fades to black and brings the player out at ExitLocation.
+ *  - The way out (at the arena's north gate): stays shut until Vulcan dies, then grinds open.
+ *  - The way in (bEntrance, on the outer wall): open from the start. Once the player has gone in, a death brings
+ *    them back in front of it rather than at the start of the map.
  * Faces its +X (into the gate); the frame, bars and trigger are built when play starts.
  */
 UCLASS()
@@ -39,6 +41,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Exit")
 	float RaiseSeconds = 4.f;
 
+	/** The way into the colosseum: open from the start instead of when Vulcan dies. */
+	UPROPERTY(EditAnywhere, Category="Exit")
+	bool bEntrance = false;
+
 	/** Opens the gate (Vulcan's death calls this). */
 	UFUNCTION(BlueprintCallable, Category="Exit")
 	void Open();
@@ -50,6 +56,8 @@ protected:
 
 private:
 	void Build();
+	void SetRaised(float Amount);
+	void ReturnPlayerToDoor();
 
 	UFUNCTION()
 	void HandleBossDeath(AActor* Killer);
