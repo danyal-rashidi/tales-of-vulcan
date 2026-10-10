@@ -20,6 +20,8 @@
  *               the game audio to Saved/SpearShots/lock_audio.wav.
  * -RomeShot     films RomeDressingSubsystem's pieces close up (banner, eagle standard, palm, the gate end).
  * -DragonShot   stands the dragon beast (/Game/Dragon) in front of the player and films each of his animations.
+ * -MapShot      the Rome map (start it with /Game/Rome/L_Rome on the command line) from the air and outside the gate.
+ * -ExitShot     (in L_Rome) kills Vulcan, films the north gate opening, walks the player through and films outside.
  */
 UCLASS()
 class TALESOFVULCAN_API UGroundCheckSubsystem : public UWorldSubsystem
@@ -45,6 +47,8 @@ private:
 	void StartOtterShot();
 	void StartRomeShot();
 	void StartDragonShot();
+	void StartMapShot();
+	void StartExitShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);

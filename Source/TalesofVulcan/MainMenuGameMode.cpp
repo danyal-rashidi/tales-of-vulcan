@@ -37,7 +37,8 @@
 
 namespace MenuSet
 {
-	const TCHAR* ArenaMap = TEXT("/Game/ThirdPerson/Lvl_ThirdPerson");
+	const TCHAR* ArenaMap = TEXT("/Game/ThirdPerson/Lvl_ThirdPerson"); // test runs
+	const TCHAR* GameMap = TEXT("/Game/Rome/L_Rome");                  // New Game: the Rome map, the colosseum inside it
 	const TCHAR* Songs[] = { TEXT("/Game/Audio/S_MenuMusic_01.S_MenuMusic_01"), TEXT("/Game/Audio/S_MenuMusic_02.S_MenuMusic_02"),
 		TEXT("/Game/Audio/S_MenuMusic_03.S_MenuMusic_03") };
 
@@ -589,7 +590,7 @@ void AMainMenuGameMode::StartNewGame()
 				Player->SetInputMode(FInputModeGameOnly());
 				Player->bShowMouseCursor = false;
 			}
-			UGameplayStatics::OpenLevel(Self, FName(MenuSet::ArenaMap));
+			UGameplayStatics::OpenLevel(Self, FName(MenuSet::GameMap));
 		}
 	});
 }

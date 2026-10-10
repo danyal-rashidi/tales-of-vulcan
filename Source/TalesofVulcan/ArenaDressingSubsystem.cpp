@@ -15,6 +15,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
+#include "LandscapeProxy.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/CommandLine.h"
 
@@ -174,6 +175,17 @@ void UArenaDressingSubsystem::SetupFog(UWorld& World)
 		float Density = 0.25f;
 		float Falloff = 0.6f;
 		float Start = 1200.f;
+		float MaxOpacity = 0.95f;
+		// In the Rome map (a landscape around the colosseum) the haze is much thinner, so the desert, town and
+		// oasis can be seen across the 4 km map.
+		for (TActorIterator<ALandscapeProxy> Landscape(&World); Landscape; ++Landscape)
+		{
+			Density = 0.035f;
+			Falloff = 0.3f;
+			Start = 3000.f;
+			MaxOpacity = 0.85f;
+			break;
+		}
 		const TCHAR* CommandLine = FCommandLine::Get();
 		FParse::Value(CommandLine, TEXT("ArenaFogDensity="), Density);
 		FParse::Value(CommandLine, TEXT("ArenaFogFalloff="), Falloff);
@@ -184,7 +196,7 @@ void UArenaDressingSubsystem::SetupFog(UWorld& World)
 		Fog->SetSecondFogHeightOffset(-Fog->GetComponentLocation().Z);
 		// Starts a little way out, so the fight stays clear while the walls and desert fade.
 		Fog->SetStartDistance(Start);
-		Fog->SetFogMaxOpacity(0.95f);
+		Fog->SetFogMaxOpacity(MaxOpacity);
 		// Dusty brown; the storm later turns it dark red from here.
 		Fog->SetFogInscatteringColor(FLinearColor(0.3f, 0.24f, 0.19f));
 		return;

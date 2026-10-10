@@ -34,6 +34,7 @@
 #include "Components/PointLightComponent.h"
 #include "Engine/PointLight.h"
 #include "AssetCompilingManager.h"
+#include "RomeExitGate.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/UObjectIterator.h"
 #include "Misc/CommandLine.h"
@@ -47,7 +48,7 @@ bool UGroundCheckSubsystem::IsTestRun()
 	return FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
 		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot"))
-		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot"));
+		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot")) || FParse::Param(CommandLine, TEXT("MapShot")) || FParse::Param(CommandLine, TEXT("ExitShot"));
 }
 
 bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -85,6 +86,14 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("BossProbe")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartBossProbe, 2.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("ExitShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartExitShot, 2.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("MapShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartMapShot, 4.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("DragonShot")))
 	{
@@ -369,6 +378,84 @@ void UGroundCheckSubsystem::Shot(const FString& Name)
 	FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (Name + TEXT(".png")), Name.StartsWith(TEXT("lock")), false);
 }
 
+void UGroundCheckSubsystem::StartExitShot()
+{
+	// The way out of the colosseum (L_Rome): Vulcan is killed, the north gate's portcullis rises, the player steps
+	// into it and comes out on the plaza outside, facing the town.
+	UWorld* World = GetWorld();
+	TActorIterator<AVulcanBoss> BossIt(World);
+	AVulcanBoss* Boss = BossIt ? *BossIt : nullptr;
+	TActorIterator<ARomeExitGate> GateIt(World);
+	ARomeExitGate* Gate = GateIt ? *GateIt : nullptr;
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	APlayerController* Controller = UGameplayStatics::GetPlayerController(World, 0);
+	if (!Boss || !Gate || !Player || !Controller)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ExitShot] boss %d gate %d player %d"), Boss != nullptr, Gate != nullptr, Player != nullptr);
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	if (UHealthComponent* PlayerHealth = Player->FindComponentByClass<UHealthComponent>())
+	{
+		PlayerHealth->bInvulnerable = true;
+	}
+	Boss->StartFight();
+	const FVector Into = Gate->GetActorForwardVector();
+	const FVector Front = Gate->GetActorLocation() - Into * 900.f + FVector(0.f, 0.f, 220.f);
+	const FVector Look = Gate->GetActorLocation() + FVector(0.f, 0.f, 220.f);
+	After(5.5f, [this, Front, Look]() { ShootFrom(Front, Look); });
+	After(6.0f, [this]() { Shot(TEXT("exit_0_shut")); });
+	After(6.2f, [World, Boss, Player]() { UGameplayStatics::ApplyDamage(Boss, 100000.f, UGameplayStatics::GetPlayerController(World, 0), Player, UDamageType::StaticClass()); });
+	After(11.0f, [this]() { Shot(TEXT("exit_1_rising")); });
+	After(14.5f, [this]() { Shot(TEXT("exit_2_open")); });
+	// Walk in: put the player just in front of the gate, then into the passage.
+	After(14.7f, [Player, Gate, Into]()
+	{
+		Player->SetActorLocation(Gate->GetActorLocation() - Into * 200.f + FVector(0.f, 0.f, 100.f), false, nullptr, ETeleportType::TeleportPhysics);
+	});
+	After(15.0f, [Player, Gate, Into]()
+	{
+		Player->SetActorLocation(Gate->GetActorLocation() + Into * 25.f + FVector(0.f, 0.f, 100.f), false, nullptr, ETeleportType::TeleportPhysics);
+	});
+	After(17.5f, [Controller, Player]() { Controller->SetViewTarget(Player); });
+	After(18.5f, [this]() { Shot(TEXT("exit_3_outside")); });
+	After(18.7f, [this, Player]()
+	{
+		const FVector At = Player->GetActorLocation();
+		UE_LOG(LogTemp, Display, TEXT("[ExitShot] player now at %s"), *At.ToString());
+		ShootFrom(At + FVector(-900.f, 1400.f, 700.f), At + FVector(0.f, -1500.f, 600.f));
+	});
+	After(19.2f, [this]() { Shot(TEXT("exit_4_around")); });
+	After(19.6f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartMapShot()
+{
+	// The Rome map (L_Rome) from the air and from the ground: over the colosseum looking north to the town and
+	// temple hill, east to the oasis, south down the desert road, and standing outside the colosseum's north gate.
+	const FVector C(-44.f, -5.f, 0.f);
+	struct FView { const TCHAR* Name; FVector Eye; FVector Look; };
+	const FView Views[] = {
+		{ TEXT("map_north"), C + FVector(0.f, -22000.f, 16000.f), C + FVector(0.f, 30000.f, 0.f) },
+		{ TEXT("map_high"), C + FVector(-60000.f, -60000.f, 70000.f), C },
+		{ TEXT("map_oasis"), C + FVector(40000.f, 6000.f, 1800.f), C + FVector(56000.f, 17000.f, -300.f) },
+		{ TEXT("map_oasis_shore"), C + FVector(47500.f, 13500.f, 900.f), C + FVector(58000.f, 18500.f, -150.f) },
+		{ TEXT("map_south"), C + FVector(0.f, -9000.f, 2500.f), C + FVector(0.f, -120000.f, 2000.f) },
+		{ TEXT("map_gate"), C + FVector(1200.f, 9000.f, 250.f), C + FVector(0.f, 3500.f, 700.f) },
+		{ TEXT("map_temple"), C + FVector(-20000.f, 20000.f, 2400.f), C + FVector(-39000.f, 43000.f, 1400.f) } };
+	float At = 0.2f;
+	for (const FView& View : Views)
+	{
+		const FVector Eye = View.Eye, Look = View.Look;
+		const FString Name = View.Name;
+		After(At, [this, Eye, Look]() { ShootFrom(Eye, Look); });
+		// Give streaming a moment to bring in the landscape around each view.
+		After(At + 2.5f, [this, Name]() { Shot(Name); });
+		At += 3.f;
+	}
+	After(At, []() { FPlatformMisc::RequestExit(false); });
+}
+
 void UGroundCheckSubsystem::StartDragonShot()
 {
 	// The dragon beast (/Game/Dragon), standing in front of the player so their sizes compare, playing each of his
@@ -522,7 +609,12 @@ void UGroundCheckSubsystem::StartRomeShot()
 	}
 	After(2.8f, [this]() { ShootFrom(FVector(-44.f, -700.f, 260.f), FVector(-44.f, 2600.f, 250.f)); });
 	After(3.2f, [this]() { Shot(TEXT("rome_gate")); });
-	After(3.6f, []() { FPlatformMisc::RequestExit(false); });
+	// Down the gate tunnel at +Y, and the colosseum's outside face there.
+	After(3.4f, [this]() { ShootFrom(FVector(-44.f, 2150.f, 170.f), FVector(-44.f, 4500.f, 170.f)); });
+	After(3.8f, [this]() { Shot(TEXT("rome_tunnel")); });
+	After(4.0f, [this]() { ShootFrom(FVector(1400.f, 8200.f, 900.f), FVector(-44.f, 3900.f, 300.f)); });
+	After(4.4f, [this]() { Shot(TEXT("rome_outside")); });
+	After(4.8f, []() { FPlatformMisc::RequestExit(false); });
 }
 
 void UGroundCheckSubsystem::StartOtterShot()

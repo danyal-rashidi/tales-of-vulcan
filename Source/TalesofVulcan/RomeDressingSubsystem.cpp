@@ -7,6 +7,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
+#include "LandscapeProxy.h"
 #include "TimerManager.h"
 
 static TAutoConsoleVariable<bool> CVarRomeDressing(
@@ -25,6 +26,10 @@ namespace RomeLayout
 
 	const FName ColosseumMesh(TEXT("colosseum"));
 	const FName DunesMesh(TEXT("SM_Dunes"));
+
+	/** The Rome map's oasis (L_Rome; the plan's rterrain.py puts it 560 m east and 170 m north of the colosseum). */
+	const FVector2D OasisCenter(-44.f + 56000.f, -5.f + 17000.f);
+	const FVector2D OasisRadii(12500.f, 8500.f);
 
 	/** Where the wall has collapsed into the arena (ArenaDressingSubsystem::BuildRuins). */
 	const float CollapsedWalls[] = { 28.f, 152.f, 214.f, 327.f };
@@ -316,11 +321,30 @@ void URomeDressingSubsystem::PlantPalms(UWorld& World)
 			Dunes->RecreatePhysicsState();
 		}
 	}
+	// In a level with a landscape (the Rome map), the palms stand on that instead.
+	bool bLandscape = false;
+	for (TActorIterator<ALandscapeProxy> It(&World); It && !bLandscape; ++It)
+	{
+		bLandscape = true;
+	}
 	auto DuneHeight = [&](const FVector2D& Point)
 	{
 		FHitResult Hit;
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(RomeDunes), true);
-		return Dunes && Dunes->LineTraceComponent(Hit, FVector(Point, 30000.f), FVector(Point, -5000.f), Params) ? Hit.ImpactPoint.Z : 0.f;
+		if (bLandscape)
+		{
+			TArray<FHitResult> Hits;
+			World.LineTraceMultiByObjectType(Hits, FVector(Point, 30000.f), FVector(Point, -5000.f), FCollisionObjectQueryParams(ECC_WorldStatic), Params);
+			for (const FHitResult& Ground : Hits)
+			{
+				if (Ground.GetActor() && Ground.GetActor()->IsA<ALandscapeProxy>())
+				{
+					return float(Ground.ImpactPoint.Z);
+				}
+			}
+			return 0.f;
+		}
+		return Dunes && Dunes->LineTraceComponent(Hit, FVector(Point, 30000.f), FVector(Point, -5000.f), Params) ? float(Hit.ImpactPoint.Z) : 0.f;
 	};
 
 	// Groves hugging the outside of the colosseum. They are 21-27 m tall so the crowns clear the 17.5 m rim
@@ -334,6 +358,23 @@ void URomeDressingSubsystem::PlantPalms(UWorld& World)
 		{
 			const FVector2D Point = RomeLayout::OnEllipse(GroveAngle + Random.FRandRange(-7.f, 7.f), RomeLayout::OuterRadii, Random.FRandRange(1.06f, 1.3f));
 			AddPalm(FVector(Point, DuneHeight(Point) - 150.f), Random.FRandRange(1.2f, 1.5f), 2);
+		}
+	}
+
+	// The Rome map's oasis (see the plan's rterrain.py): a grove ringing the water, thicker on the town side.
+	if (bLandscape)
+	{
+		for (int32 i = 0; i < 70; ++i)
+		{
+			const float Angle = Random.FRandRange(0.f, 360.f);
+			const FVector2D Point = RomeLayout::OasisCenter + FVector2D(FMath::Cos(FMath::DegreesToRadians(Angle)) * RomeLayout::OasisRadii.X,
+				FMath::Sin(FMath::DegreesToRadians(Angle)) * RomeLayout::OasisRadii.Y) * Random.FRandRange(0.78f, 1.45f);
+			const float Height = DuneHeight(Point);
+			if (Height < -220.f)
+			{
+				continue; // that's in the water
+			}
+			AddPalm(FVector(Point, Height - 40.f), Random.FRandRange(0.7f, 1.15f), Random.RandRange(0, 2));
 		}
 	}
 

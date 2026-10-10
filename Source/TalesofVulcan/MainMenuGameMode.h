@@ -14,7 +14,8 @@ class UMainMenuWidget;
  * the scene when play starts. Elvis stands in a dark, foggy Roman ruin between two braziers and a bonfire
  * (AFlameFX), embers drifting, with Vulcan's bronze statue looming behind in the fog. The camera drifts slowly,
  * and "Wrath of Vulkan" (S_MenuMusic_01..03 in /Game/Audio) plays in a loop. UMainMenuWidget is the screen on top.
- * New Game opens the arena (Lvl_ThirdPerson). A test flag (-EnvShot, -OtterShot, ...) skips straight to the arena.
+ * New Game opens the Rome map (L_Rome, the colosseum inside a 4 km desert). A test flag (-EnvShot, -OtterShot, ...) skips
+ * straight to the arena level (Lvl_ThirdPerson).
  * -MenuShot films the menu into Saved/SpearShots, then picks New Game and lets the arena's -EnvShot film and quit.
  */
 UCLASS()
