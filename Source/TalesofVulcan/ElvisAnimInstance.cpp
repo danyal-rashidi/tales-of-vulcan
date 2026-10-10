@@ -163,6 +163,7 @@ void FElvisAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float Del
 
 	const UElvisAnimInstance* Elvis = Cast<UElvisAnimInstance>(InAnimInstance);
 	bSimulate = Elvis && Elvis->bSimulateCape;
+	Wind = Elvis ? Elvis->CapeWind : FVector::ZeroVector;
 
 	// The floor under him, so the cape can lie on it.
 	const USkeletalMeshComponent* Mesh = InAnimInstance->GetSkelMeshComponent();
@@ -330,6 +331,8 @@ void FElvisAnimInstanceProxy::Step(const FVector (&Targets)[NumChains][NumPoints
 {
 	using namespace ElvisCape;
 	const FVector Fall(0.f, 0.f, Gravity * Dt * Dt);
+	WindTime += Dt;
+	const bool bWind = !Wind.IsNearlyZero();
 	for (int32 c = 0; c < NumChains; ++c)
 	{
 		for (int32 i = 0; i < NumPoints; ++i)
@@ -337,6 +340,12 @@ void FElvisAnimInstanceProxy::Step(const FVector (&Targets)[NumChains][NumPoints
 			const FVector Velocity = (Pos[c][i] - PrevPos[c][i]) * Damping;
 			PrevPos[c][i] = Pos[c][i];
 			Pos[c][i] += Velocity + Fall;
+			if (bWind)
+			{
+				// Slow gusts with a quicker flutter, each chain a little out of step, more toward the hem.
+				const float Gust = 0.65f + 0.35f * FMath::Sin(WindTime * 1.3f + c * 0.9f) + 0.2f * FMath::Sin(WindTime * 3.7f + i * 0.6f + c * 2.1f);
+				Pos[c][i] += Wind * (Gust * Dt * Dt * i / (NumPoints - 1));
+			}
 			Pos[c][i] += (Targets[c][i] - Pos[c][i]) * ShapeMemory[i];
 		}
 		Pos[c][0] = PrevPos[c][0] = Targets[c][0];

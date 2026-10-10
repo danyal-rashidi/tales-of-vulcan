@@ -70,6 +70,8 @@ private:
 	float TimeAccumulator = 0.f;
 	float PendingDeltaTime = 0.f;
 	float FloorZ = -UE_BIG_NUMBER;
+	FVector Wind = FVector::ZeroVector;
+	float WindTime = 0.f;
 };
 
 UCLASS(Transient)
@@ -87,6 +89,11 @@ public:
 	/** Turn off to see the cape stiff on his back (for comparison). */
 	UPROPERTY(EditDefaultsOnly, Category="Elvis|Cape")
 	bool bSimulateCape = true;
+
+	/** Wind pushing on the cape (world space, cm/s^2), gusting around this strength and strongest at the hem.
+	 *  Zero (the default) is still air; the main menu sets a breeze. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Elvis|Cape")
+	FVector CapeWind = FVector::ZeroVector;
 
 protected:
 	virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
