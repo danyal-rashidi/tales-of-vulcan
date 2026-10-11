@@ -233,7 +233,7 @@ void UPlayerEquipComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 			{
 				Grip->bHolstered = !bArmed;
 			}
-			GameAudio::Play(this, TEXT("Swing"), Character->GetActorLocation(), bArmed ? 1.25f : 0.9f, 0.25f, 1500.f);
+			GameAudio::Play(this, TEXT("Unsheathe"), Character->GetActorLocation(), bArmed ? 0.7f : 0.5f, bArmed ? 0.9f : 0.75f, 1500.f);
 		}
 		if (ActionTime >= Length)
 		{

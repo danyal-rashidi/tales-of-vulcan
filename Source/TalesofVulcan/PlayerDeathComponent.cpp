@@ -72,7 +72,7 @@ void UPlayerDeathComponent::HandleDeath(AActor* Killer)
 	}
 
 	// Body hits the sand, then a deep toll under "YOU DIED".
-	GameAudio::Play(this, TEXT("Thud"), Character->GetActorLocation(), 1.2f, 0.6f);
+	GameAudio::Play(this, TEXT("BodyFall"), Character->GetActorLocation(), 1.1f, 0.9f);
 	GameAudio::Play2D(this, TEXT("Bell"), 0.7f, 0.35f);
 
 	OnPlayerDied.Broadcast();

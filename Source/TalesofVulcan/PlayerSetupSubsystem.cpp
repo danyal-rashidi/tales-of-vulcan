@@ -3,6 +3,7 @@
 #include "GameFramework/PlayerController.h"
 #include "PlayerAnimInstance.h"
 #include "PlayerEquipComponent.h"
+#include "HipRootMotionComponent.h"
 #include "SpearGripComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
@@ -66,6 +67,13 @@ void UPlayerSetupSubsystem::SetUp(ACharacter* Character)
 	if (USkeletalMeshComponent* Body = Character->GetMesh())
 	{
 		Body->SetAnimInstanceClass(UPlayerAnimInstance::StaticClass());
+		// The capsule hovers ~2 cm over the floor and the mesh sat on its bottom: measured in play (-LegShot), the feet
+		// stood ~4 cm off the ground. Lower the body (and Elvis, attached to it) to meet it.
+		Body->SetRelativeLocation(Body->GetRelativeLocation() - FVector(0.f, 0.f, 4.f));
+		if (UHipRootMotionComponent* Hips = Character->FindComponentByClass<UHipRootMotionComponent>())
+		{
+			Hips->RebaseMesh();                // (it puts the mesh back where it found it every frame)
+		}
 	}
 	UPlayerEquipComponent* Equip = NewObject<UPlayerEquipComponent>(Character, TEXT("Equip"));
 	Equip->RegisterComponent();

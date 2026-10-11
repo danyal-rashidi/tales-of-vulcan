@@ -29,6 +29,15 @@ void UHipRootMotionComponent::BeginPlay()
 	bReady = true;
 }
 
+void UHipRootMotionComponent::RebaseMesh()
+{
+	const ACharacter* Character = Cast<ACharacter>(GetOwner());
+	if (const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr)
+	{
+		MeshBaseLocation = Mesh->GetRelativeLocation() + LastTravel;
+	}
+}
+
 void UHipRootMotionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);

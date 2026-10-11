@@ -1,5 +1,6 @@
 #include "RomeDressingSubsystem.h"
 #include "RomeExitGate.h"
+#include "GameAudio.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -118,6 +119,7 @@ void URomeDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		HangBanners(*World);
 		PlaceStandards(*World);
 		DressStreets(*World);
+		SoundOasis(*World);
 	}));
 }
 
@@ -771,4 +773,21 @@ void URomeDressingSubsystem::DressStreets(UWorld& World)
 		}
 	}
 	UE_LOG(LogTemp, Display, TEXT("RomeDressing: %d street props"), Count);
+}
+
+void URomeDressingSubsystem::SoundOasis(UWorld& World)
+{
+	// Only the Rome map has the oasis (rterrain.py: a 125 x 85 m basin at (560, 170) m, water at -2.5 m).
+	if (!TActorIterator<ALandscapeProxy>(&World))
+	{
+		return;
+	}
+	// Water lapping at the bank (S_OasisLoop), from a ring of spots round the shore so it's heard all along it.
+	const FVector Centre(-44.f + 56000.f, -5.f + 17000.f, -200.f);
+	for (int32 i = 0; i < 6; ++i)
+	{
+		const float Angle = 2.f * PI * i / 6.f;
+		const FVector At = Centre + FVector(FMath::Cos(Angle) * 10500.f, FMath::Sin(Angle) * 7000.f, 0.f);
+		GameAudio::Loop(&World, TEXT("OasisLoop"), nullptr, At, 0.55f, 4000.f);
+	}
 }

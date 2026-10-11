@@ -3,6 +3,8 @@
 #include "AnimationRuntime.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationPoseData.h"
+#include "BonePose.h"
+#include "HAL/IConsoleManager.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Misc/Paths.h"
@@ -35,6 +37,80 @@ namespace
 	}
 }
 
+// The library's moving clips (walk, jog, sprint, lean) have the body from the hips up turned ~13 degrees to his left of
+// the way he runs, while the feet track straight ahead (measured: probe_facing.py, probe_slide.py) - from behind he
+// looked as if his legs curved left. Turn the pelvis (and so everything above it) back, and give the thighs the
+// opposite turn so the legs and feet stay on their straight track. Lean: on Elvis the spine also leaned ~6.5 degrees to
+// his right while running (the clip leans ~1.6; the copy onto his skeleton adds the rest) - tilt it back by this much.
+static void TurnBodyBack(FPoseContext& Pose, float Degrees, float LeanBack)
+{
+	const FBoneContainer& Bones = Pose.Pose.GetBoneContainer();
+	auto Find = [&Bones](const TCHAR* Name)
+	{
+		const int32 Mesh = Bones.GetReferenceSkeleton().FindBoneIndex(FName(Name));
+		return Mesh == INDEX_NONE ? FCompactPoseBoneIndex(INDEX_NONE) : Bones.MakeCompactPoseIndex(FMeshPoseBoneIndex(Mesh));
+	};
+	const FCompactPoseBoneIndex Pelvis = Find(TEXT("pelvis")), ThighL = Find(TEXT("thigh_l")), ThighR = Find(TEXT("thigh_r")), Spine = Find(TEXT("spine_01"));
+	if (!Pelvis.IsValid() || !ThighL.IsValid() || !ThighR.IsValid() || !Spine.IsValid())
+	{
+		return;
+	}
+	FCSPose<FCompactPose> CS;
+	CS.InitPose(Pose.Pose);
+	const FQuat Turn(FVector::UpVector, FMath::DegreesToRadians(Degrees));     // + turns him to his right (Quinn faces +Y)
+	FTransform Hips = CS.GetComponentSpaceTransform(Pelvis);
+	const FVector Pivot = Hips.GetLocation();
+	TArray<FBoneTransform> Set;
+	Hips.SetRotation(Turn * Hips.GetRotation());
+	Set.Add(FBoneTransform(Pelvis, Hips));
+	for (const FCompactPoseBoneIndex Thigh : { ThighL, ThighR })
+	{
+		FTransform T = CS.GetComponentSpaceTransform(Thigh);                    // keeps its own orientation...
+		T.SetLocation(Pivot + Turn.RotateVector(T.GetLocation() - Pivot));      // ...and rides round with the hips
+		Set.Add(FBoneTransform(Thigh, T));
+	}
+	{
+		// the spine rides round with the hips, then tilts toward his left about the (turned) forward axis
+		FTransform T = CS.GetComponentSpaceTransform(Spine);
+		const FQuat Lean(Turn.RotateVector(FVector(0.f, 1.f, 0.f)), FMath::DegreesToRadians(LeanBack));
+		T.SetLocation(Pivot + Turn.RotateVector(T.GetLocation() - Pivot));
+		T.SetRotation(Lean * Turn * T.GetRotation());
+		Set.Add(FBoneTransform(Spine, T));
+	}
+	Set.Sort(FCompareBoneTransformIndex());
+	CS.SafeSetCSBoneTransforms(Set);
+	FCSPose<FCompactPose>::ConvertComponentPosesToLocalPoses(MoveTemp(CS), Pose.Pose);
+}
+
+// The same clips plant the right foot turned ~60 degrees inward in play (pigeon-toed; the left points ~10 degrees out, as
+// Quinn's own clips do: probe_twist.py) - the "odd angle" of his right leg. Turn it out (tov.RightFootOut degrees).
+static TAutoConsoleVariable<float> CVarRightFootOut(TEXT("tov.RightFootOut"), 47.f, TEXT("Degrees the player's right foot is turned out while moving (the library clips plant it pigeon-toed)."));
+static void TurnRightFootOut(FPoseContext& Pose, float Degrees)
+{
+	const FBoneContainer& Bones = Pose.Pose.GetBoneContainer();
+	auto Find = [&Bones](const TCHAR* Name)
+	{
+		const int32 Mesh = Bones.GetReferenceSkeleton().FindBoneIndex(FName(Name));
+		return Mesh == INDEX_NONE ? FCompactPoseBoneIndex(INDEX_NONE) : Bones.MakeCompactPoseIndex(FMeshPoseBoneIndex(Mesh));
+	};
+	const FCompactPoseBoneIndex Calf = Find(TEXT("calf_r")), Foot = Find(TEXT("foot_r"));
+	if (!Calf.IsValid() || !Foot.IsValid())
+	{
+		return;
+	}
+	FCSPose<FCompactPose> CS;
+	CS.InitPose(Pose.Pose);
+	FTransform T = CS.GetComponentSpaceTransform(Foot);
+	// About the shin, like a real ankle turn, so it holds through the whole stride: the twist is a steady ~45-50 degrees
+	// against the left foot (probe_shin_twist.py). Turning about the vertical instead was right only while the foot was
+	// flat - with the leg back and the toe down it swung the foot sideways. + = toe toward his right: out, for this foot.
+	const FVector Shin = (CS.GetComponentSpaceTransform(Calf).GetLocation() - T.GetLocation()).GetSafeNormal();    // ankle -> knee
+	T.SetRotation(FQuat(Shin, FMath::DegreesToRadians(Degrees)) * T.GetRotation());
+	TArray<FBoneTransform> Set = { FBoneTransform(Foot, T) };
+	CS.SafeSetCSBoneTransforms(Set);
+	FCSPose<FCompactPose>::ConvertComponentPosesToLocalPoses(MoveTemp(CS), Pose.Pose);
+}
+
 // ============================================================ node
 
 void FAnimNode_PlayerLocomotion::Update_AnyThread(const FAnimationUpdateContext& Context)
@@ -61,7 +137,8 @@ void FAnimNode_PlayerLocomotion::Update_AnyThread(const FAnimationUpdateContext&
 	}
 
 	// Lean into turns while jogging forward.
-	const float LeanTarget = FMath::Clamp(YawRate / 260.f, -1.f, 1.f) * JogWeight * FMath::Clamp(Forwardness, 0.f, 1.f);
+	// (at most a third of the lean clips: fully in, they swing both knees ~12 cm sideways)
+	const float LeanTarget = FMath::Clamp(YawRate / 260.f, -1.f, 1.f) * 0.35f * JogWeight * FMath::Clamp(Forwardness, 0.f, 1.f);
 	Lean = FMath::FInterpTo(Lean, LeanTarget, Dt, 6.f);
 
 	// In the air, and landing.
@@ -156,27 +233,33 @@ void FAnimNode_PlayerLocomotion::Evaluate_AnyThread(FPoseContext& Output)
 		FAnimationPoseData Out(Into);
 		FAnimationRuntime::BlendTwoPosesTogetherPerBone(FAnimationPoseData(Base), FAnimationPoseData(Top), W, Out);
 	};
+	// Where in each cycle the left foot plants, relative to the forward jog's (measured from the clips: probe_phase.py),
+	// so every cycle that gets blended puts the same foot down at the same moment. Without this, blending walk with
+	// jog, or forward with a diagonal while turning, averaged a planted foot with a lifted one: the feet floated and
+	// the knees bent across. Order: forward, forward-right, right, back-right, back, back-left, left, forward-left.
+	static const float WalkSync[8] = { 0.23f, 0.10f, 0.81f, 0.81f, 0.69f, 0.69f, 0.21f, 0.10f };
+	static const float JogSync[8] = { 0.f, 0.f, 0.73f, -0.02f, -0.02f, -0.02f, 0.94f, 0.f };
 	// The eight-direction sets: the two clips either side of the direction of travel.
-	auto Directional = [this](TObjectPtr<UAnimSequence>* Set, FPoseContext& Into)
+	auto Directional = [this](TObjectPtr<UAnimSequence>* Set, const float* Sync, FPoseContext& Into)
 	{
 		const float D = FMath::Fmod(Direction + 360.f, 360.f) / 45.f;
 		const int32 I0 = FMath::FloorToInt(D) % 8;
 		const int32 I1 = (I0 + 1) % 8;
 		const float A = D - FMath::FloorToFloat(D);
-		auto At = [this](const UAnimSequence* Clip) { return Clip ? Phase * Clip->GetPlayLength() : 0.f; };
+		auto At = [this, Set, Sync](int32 I) { return Set[I] ? FMath::Fmod(Phase + Sync[I] + 1.f, 1.f) * Set[I]->GetPlayLength() : 0.f; };
 		if (A < 0.02f || !Set[I1])
 		{
-			SampleAt(Set[I0], At(Set[I0]), Into, true);
+			SampleAt(Set[I0], At(I0), Into, true);
 			return;
 		}
 		if (A > 0.98f || !Set[I0])
 		{
-			SampleAt(Set[I1], At(Set[I1]), Into, true);
+			SampleAt(Set[I1], At(I1), Into, true);
 			return;
 		}
 		FPoseContext P0(Into), P1(Into);
-		SampleAt(Set[I0], At(Set[I0]), P0, true);
-		SampleAt(Set[I1], At(Set[I1]), P1, true);
+		SampleAt(Set[I0], At(I0), P0, true);
+		SampleAt(Set[I1], At(I1), P1, true);
 		BlendInto(P0, P1, A, Into);
 	};
 
@@ -208,12 +291,12 @@ void FAnimNode_PlayerLocomotion::Evaluate_AnyThread(FPoseContext& Output)
 		FPoseContext Move(Output);
 		if (JogWeight < 0.999f)
 		{
-			Directional(Walk, Move);
+			Directional(Walk, WalkSync, Move);
 		}
 		if (JogWeight > 0.001f)
 		{
 			FPoseContext JogPose(Output);
-			Directional(Jog, JogPose);
+			Directional(Jog, JogSync, JogPose);
 			if (FMath::Abs(Lean) > 0.03f && (Lean > 0.f ? LeanRight : LeanLeft))
 			{
 				FPoseContext LeanPose(Output), Mixed(Output);
@@ -249,6 +332,8 @@ void FAnimNode_PlayerLocomotion::Evaluate_AnyThread(FPoseContext& Output)
 			PerBone(Move, Armed, ArmedUpper, Mixed);
 			Move = Mixed;
 		}
+		TurnBodyBack(Move, 13.f, 5.f);
+		TurnRightFootOut(Move, CVarRightFootOut.GetValueOnAnyThread());
 		if (MoveWeight < 0.999f)
 		{
 			BlendInto(Stand, Move, MoveWeight, Ground);
@@ -293,6 +378,35 @@ void FAnimNode_PlayerLocomotion::Evaluate_AnyThread(FPoseContext& Output)
 		Body = Ground;
 	}
 
+	// ---- the fingers: the library clips hold them in one broken pose, folded ~150 degrees back on themselves
+	// (probe_hands.py; Quinn's own clips curl them 55-75 degrees, a loose fist). Take them from Quinn's idle instead,
+	// except while gripping the spear (the armed pose has its own grip).
+	if (Idle && ArmedWeight < 0.999f)
+	{
+		FPoseContext Hands(Output);
+		SampleAt(Idle, IdleTime, Hands, true);
+		const FBoneContainer& Bones = Body.Pose.GetBoneContainer();
+		const FReferenceSkeleton& Ref = Bones.GetReferenceSkeleton();
+		TArray<uint8> InHand;
+		InHand.SetNumZeroed(Body.Pose.GetNumBones());
+		const float W = 1.f - ArmedWeight;
+		for (const FCompactPoseBoneIndex Index : Body.Pose.ForEachBoneIndex())
+		{
+			const FCompactPoseBoneIndex Parent = Bones.GetParentBoneIndex(Index);
+			if (!Parent.IsValid())
+			{
+				continue;
+			}
+			const FName ParentName = Ref.GetBoneName(Bones.MakeMeshPoseIndex(Parent).GetInt());
+			InHand[Index.GetInt()] = InHand[Parent.GetInt()] || ParentName == TEXT("hand_l") || ParentName == TEXT("hand_r");
+			if (InHand[Index.GetInt()])
+			{
+				FTransform& T = Body.Pose[Index];
+				T.BlendWith(Hands.Pose[Index], W);
+			}
+		}
+	}
+
 	// ---- the upper-body clip on top
 	if (Overlay && OverlayWeight > 0.001f)
 	{
@@ -330,7 +444,11 @@ void FPlayerAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float De
 	const float Yaw = Character->GetActorRotation().Yaw;
 	Locomotion->Speed = Velocity.Size2D();
 	Locomotion->VerticalSpeed = Velocity.Z;
-	Locomotion->Direction = Locomotion->Speed > 5.f ? FMath::FindDeltaAngleDegrees(Yaw, Velocity.Rotation().Yaw) : 0.f;
+	// Turning to face the way he moves (not locked on), the lag between facing and travel isn't sideways movement:
+	// the forward cycles only. Locked on, he strafes, and the eight directions blend.
+	const UCharacterMovementComponent* Moves = Character->GetCharacterMovement();
+	const bool bStrafing = Moves && !Moves->bOrientRotationToMovement;
+	Locomotion->Direction = (Locomotion->Speed > 5.f && bStrafing) ? FMath::FindDeltaAngleDegrees(Yaw, Velocity.Rotation().Yaw) : 0.f;
 	Locomotion->YawRate = (bHasYaw && DeltaSeconds > 0.f) ? FMath::FindDeltaAngleDegrees(LastYaw, Yaw) / DeltaSeconds : 0.f;
 	LastYaw = Yaw;
 	bHasYaw = true;
@@ -386,7 +504,8 @@ void UPlayerAnimInstance::NativeInitializeAnimation()
 		WalkClips[i] = LoadClip(WalkClips[i], UAL + TEXT("Walk") + Dirs[i]);
 		JogClips[i] = LoadClip(JogClips[i], UAL + TEXT("Jog") + Dirs[i]);
 	}
-	IdleClip = LoadClip(IdleClip, UAL + TEXT("Idle"));
+	// (Quinn's own idle: the library's stands with the left foot raised and the right knee bowed out ~10 cm.)
+	IdleClip = LoadClip(IdleClip, TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle"));
 	IdleFidgetClip = LoadClip(IdleFidgetClip, UAL + TEXT("IdleLookAround"));
 	ArmedIdleClip = LoadClip(ArmedIdleClip, TEXT("/Game/Player/Animations/RTG_Great_Sword_Idle"));
 	SprintClip = LoadClip(SprintClip, UAL + TEXT("Sprint"));

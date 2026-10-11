@@ -31,4 +31,5 @@ private:
 	void HangBanners(UWorld& World);
 	void PlaceStandards(UWorld& World);
 	void DressStreets(UWorld& World);
+	void SoundOasis(UWorld& World);
 };

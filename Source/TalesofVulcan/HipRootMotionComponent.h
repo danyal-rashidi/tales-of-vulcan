@@ -29,6 +29,9 @@ public:
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
+	/** The mesh was moved on purpose (e.g. lowered onto the floor): keep it there from now on. */
+	void RebaseMesh();
+
 protected:
 	virtual void BeginPlay() override;
 

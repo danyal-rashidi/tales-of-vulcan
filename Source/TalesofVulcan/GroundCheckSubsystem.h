@@ -55,6 +55,9 @@ private:
 	void StartExitShot();
 	void StartMoveShot();
 	void StartPropShot();
+	void StartStepShot();
+	void StartLegShot();
+	void StartHouseShot();
 	void Shot(const FString& Name);
 	void ShootFrom(const FVector& Location, const FVector& LookAt);
 	void After(float Seconds, TFunction<void()> Action);

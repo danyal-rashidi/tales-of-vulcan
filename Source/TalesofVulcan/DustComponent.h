@@ -9,6 +9,9 @@
  * Sand kicked up by a character: small puffs while running, a puff on landing and on dodge rolls,
  * and a big burst where a plunge attack slams down. Sized by the character's capsule, so Vulcan
  * kicks up more than the player. Uses FireFX's dust preset (no Niagara assets).
+ * Also the footstep sounds, at any pace: the player's steps sound like what's underfoot (S_Step_Sand on open
+ * desert, S_Step_Stone on the town's paving and stone floors, S_Step_Wood on boards, S_Step_Gravel on rocks and
+ * steep rocky ground); Vulcan's are S_BossStep.
  * Added to every character automatically by DustSetupSubsystem.
  */
 UCLASS(ClassGroup=(Effects), meta=(BlueprintSpawnableComponent))
@@ -35,6 +38,9 @@ protected:
 private:
 	void Puff(const FVector& Location, float Radius, int32 Count) const;
 	FVector GetFeet() const;
+	void PlayStep(float Pace) const;
+	/** Which footstep set fits the ground under the feet. */
+	const TCHAR* StepSoundUnderfoot() const;
 
 	UFUNCTION()
 	void HandleLanded(const FHitResult& Hit);
@@ -48,6 +54,7 @@ private:
 	/** Capsule radius relative to the player's. */
 	float Scale = 1.f;
 	float Travelled = 0.f;
+	float StepTravelled = 0.f;
 	bool bLeftFoot = false;
 };
 

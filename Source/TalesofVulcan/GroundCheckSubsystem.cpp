@@ -51,7 +51,7 @@ bool UGroundCheckSubsystem::IsTestRun()
 	return FParse::Param(CommandLine, TEXT("GroundCheck")) || FParse::Param(CommandLine, TEXT("SpearShot"))
 		|| FParse::Param(CommandLine, TEXT("EnvShot")) || FParse::Param(CommandLine, TEXT("FireShot"))
 		|| FParse::Param(CommandLine, TEXT("BossShot")) || FParse::Param(CommandLine, TEXT("BossProbe")) || FParse::Param(CommandLine, TEXT("LockShot"))
-		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot")) || FParse::Param(CommandLine, TEXT("MapShot")) || FParse::Param(CommandLine, TEXT("ExitShot")) || FParse::Param(CommandLine, TEXT("MoveShot")) || FParse::Param(CommandLine, TEXT("PropShot"));
+		|| FParse::Param(CommandLine, TEXT("ElvisShot")) || FParse::Param(CommandLine, TEXT("OtterShot")) || FParse::Param(CommandLine, TEXT("RomeShot")) || FParse::Param(CommandLine, TEXT("DragonShot")) || FParse::Param(CommandLine, TEXT("MapShot")) || FParse::Param(CommandLine, TEXT("ExitShot")) || FParse::Param(CommandLine, TEXT("MoveShot")) || FParse::Param(CommandLine, TEXT("PropShot")) || FParse::Param(CommandLine, TEXT("StepShot")) || FParse::Param(CommandLine, TEXT("LegShot")) || FParse::Param(CommandLine, TEXT("HouseShot"));
 }
 
 bool UGroundCheckSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -97,6 +97,18 @@ void UGroundCheckSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	else if (FParse::Param(CommandLine, TEXT("MoveShot")))
 	{
 		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartMoveShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("HouseShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartHouseShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("LegShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartLegShot, 3.f, false);
+	}
+	else if (FParse::Param(CommandLine, TEXT("StepShot")))
+	{
+		Timers.SetTimer(ReportTimer, this, &UGroundCheckSubsystem::StartStepShot, 3.f, false);
 	}
 	else if (FParse::Param(CommandLine, TEXT("ExitShot")))
 	{
@@ -469,6 +481,334 @@ void UGroundCheckSubsystem::StartExitShot()
 	After(Cleared + 1.0f, []() { FPlatformMisc::RequestExit(false); });
 }
 
+void UGroundCheckSubsystem::StartHouseShot()
+{
+	// Walking into the town's houses in the Rome map, through the player's own camera: a portico house (B05, C04, A07
+	// have a colonnade in front) and a shop house (A04, B03, B07, C01, C02 have open shopfronts). The player starts
+	// 4 m out in front of the house's middle and walks straight at it; the log says how far in they got.
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	if (!Player)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	auto Find = [World, Player](std::initializer_list<const TCHAR*> Names) -> AStaticMeshActor*
+	{
+		AStaticMeshActor* Best = nullptr;
+		float BestDist = 1e12f;
+		for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
+		{
+			const UStaticMesh* Mesh = It->GetStaticMeshComponent()->GetStaticMesh();
+			const FString Name = Mesh ? Mesh->GetName() : FString();
+			for (const TCHAR* N : Names)
+			{
+				const float D = FVector::DistSquared(It->GetActorLocation(), Player->GetActorLocation());
+				if (Name == FString(TEXT("SM_RomeHouse_")) + N && D < BestDist)
+				{
+					Best = *It; BestDist = D;
+				}
+			}
+		}
+		return Best;
+	};
+	struct FVisit { const TCHAR* Name; AStaticMeshActor* House; };
+	const FVisit Visits[] = { { TEXT("portico"), Find({ TEXT("B05"), TEXT("C04"), TEXT("A07") }) }, { TEXT("shop"), Find({ TEXT("A04"), TEXT("B03"), TEXT("B07"), TEXT("C01") }) } };
+	World->GetTimerManager().SetTimer(MoveTimer, FTimerDelegate::CreateWeakLambda(this, [this, Player]()
+	{
+		if (!MoveInput.IsNearlyZero())
+		{
+			Player->AddMovementInput(MoveInput.GetSafeNormal(), MoveInput.Size());
+		}
+	}), 0.005f, true);
+	float At = 0.2f;
+	for (const FVisit& V : Visits)
+	{
+		if (!V.House)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[HouseShot] no %s house found"), V.Name);
+			continue;
+		}
+		// The houses' fronts face local +Y; the pivot is the middle of the street front at ground level.
+		const FTransform Frame = V.House->GetActorTransform();
+		const FVector Out = Frame.GetRotation().RotateVector(FVector(0.f, 1.f, 0.f));
+		const FVector Front = Frame.GetLocation();
+		const FString Name = V.Name;
+		const FString Mesh = V.House->GetStaticMeshComponent()->GetStaticMesh()->GetName();
+		After(At, [this, Player, Front, Out, Name, Mesh]()
+		{
+			MoveInput = FVector::ZeroVector;
+			Player->GetCharacterMovement()->StopMovementImmediately();
+			Player->TeleportTo(Front + Out * 400.f + FVector(0.f, 0.f, 120.f), (-Out).Rotation());
+			if (APlayerController* PC = Cast<APlayerController>(Player->GetController()))
+			{
+				PC->SetControlRotation((-Out).Rotation() + FRotator(-10.f, 0.f, 0.f));
+				PC->SetViewTarget(Player);
+			}
+			UE_LOG(LogTemp, Display, TEXT("[HouseShot] %s house %s"), *Name, *Mesh);
+		});
+		After(At + 1.0f, [this, Out]() { MoveInput = -Out; });
+		After(At + 2.4f, [this]() { Shot(TEXT("house_walk_in_1")); });
+		After(At + 3.6f, [this, Player, Front, Out, Name]()
+		{
+			const float Ahead = FVector::DotProduct(Player->GetActorLocation() - Front, Out);
+			UE_LOG(LogTemp, Display, TEXT("[HouseShot] %s: stopped %.0f cm out from the house front (negative = inside the facade line)"), *Name, Ahead);
+			Shot(TEXT("house_") + Name);
+		});
+		At += 4.f;
+	}
+	After(At, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartLegShot()
+{
+	// Elvis's legs in play, after every retarget and adjustment: standing, running straight, running round a curve and
+	// walking. Each phase logs how high each of his feet gets at its lowest (it should touch, ~0-8 cm), the hidden
+	// Quinn's feet for comparison, and how far each knee bows sideways off the hip-to-ankle line; plus knee-height shots.
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	USkeletalMeshComponent* Elvis = nullptr;
+	if (Player)
+	{
+		TArray<USkeletalMeshComponent*> Meshes;
+		Player->GetComponents(Meshes);
+		for (USkeletalMeshComponent* Mesh : Meshes)
+		{
+			if (Mesh->GetSkeletalMeshAsset() && Mesh->GetSkeletalMeshAsset()->GetName() == TEXT("SK_Elvis"))
+			{
+				Elvis = Mesh;
+			}
+		}
+	}
+	if (!Player || !Elvis)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LegShot] player %d elvis %d"), Player != nullptr, Elvis != nullptr);
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	struct FLegStats { float LowL = 1e9f, LowR = 1e9f, QLowL = 1e9f, QLowR = 1e9f, BowL0 = 1e9f, BowL1 = -1e9f, BowR0 = 1e9f, BowR1 = -1e9f; float SideL = 0.f, SideR = 0.f, QSideL = 0.f, QSideR = 0.f; float HipYaw = 0.f, ChestYaw = 0.f, HipRoll = 0.f, SpineLean = 0.f; float ToeL0 = 1e9f, ToeL1 = -1e9f, ToeR0 = 1e9f, ToeR1 = -1e9f, QToeL0 = 1e9f, QToeL1 = -1e9f, QToeR0 = 1e9f, QToeR1 = -1e9f, KneeL0 = 1e9f, KneeL1 = -1e9f, KneeR0 = 1e9f, KneeR1 = -1e9f; float PToeL = 0.f, PToeR = 0.f, PQToeL = 0.f, PQToeR = 0.f; int32 PL = 0, PR = 0; TArray<float> TwL, TwR; float CurlL = 0.f, CurlR = 0.f, WristL = 0.f, WristR = 0.f; int32 NL = 0, NR = 0; int32 N = 0; };
+	TSharedRef<FLegStats> Stats = MakeShared<FLegStats>();
+	USkeletalMeshComponent* Quinn = Player->GetMesh();
+	World->GetTimerManager().SetTimer(MoveTimer, FTimerDelegate::CreateWeakLambda(this, [this, Player, Elvis, Quinn, Stats]()
+	{
+		if (!MoveInput.IsNearlyZero())
+		{
+			Player->AddMovementInput(MoveInput.GetSafeNormal(), MoveInput.Size());
+		}
+		FHitResult Hit;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(LegShot), false, Player);
+		const FVector At = Player->GetActorLocation();
+		if (!GetWorld()->LineTraceSingleByChannel(Hit, At, At - FVector(0.f, 0.f, 400.f), ECC_Visibility, Params))
+		{
+			return;
+		}
+		const float Ground = Hit.ImpactPoint.Z;
+		auto Low = [Ground](USkeletalMeshComponent* Mesh, FName Foot, FName Toe) { return FMath::Min(Mesh->GetBoneLocation(Foot).Z, Mesh->GetBoneLocation(Toe).Z) - Ground; };
+		const FVector Right = Player->GetActorRightVector();
+		auto Bow = [Elvis, Right](const TCHAR* Side)
+		{
+			const FVector Hip = Elvis->GetBoneLocation(FName(FString(Side) + TEXT("UpLeg")));
+			const FVector Knee = Elvis->GetBoneLocation(FName(FString(Side) + TEXT("Leg")));
+			const FVector Ankle = Elvis->GetBoneLocation(FName(FString(Side) + TEXT("Foot")));
+			return FVector::DotProduct(Knee - (Hip + Ankle) * 0.5f, Right);
+		};
+		FLegStats& S = *Stats;
+		S.LowL = FMath::Min(S.LowL, Low(Elvis, TEXT("LeftFoot"), TEXT("LeftToeBase")));
+		S.LowR = FMath::Min(S.LowR, Low(Elvis, TEXT("RightFoot"), TEXT("RightToeBase")));
+		S.QLowL = FMath::Min(S.QLowL, Low(Quinn, TEXT("foot_l"), TEXT("ball_l")));
+		S.QLowR = FMath::Min(S.QLowR, Low(Quinn, TEXT("foot_r"), TEXT("ball_r")));
+		const float BL = Bow(TEXT("Left")), BR = Bow(TEXT("Right"));
+		// Where each foot lands sideways from its own hip (+ = to his right), averaged over the moments it's down:
+		// a planted foot should sit about under its hip (a few cm in); a leg slanting across shows as a big inward offset.
+		auto Side = [Right](USkeletalMeshComponent* Mesh, FName Hip, FName Foot) { return FVector::DotProduct(Mesh->GetBoneLocation(Foot) - Mesh->GetBoneLocation(Hip), Right); };
+		if (Elvis->GetBoneLocation(TEXT("LeftFoot")).Z - Ground < 16.f) { S.SideL += Side(Elvis, TEXT("LeftUpLeg"), TEXT("LeftFoot")); S.QSideL += Side(Quinn, TEXT("thigh_l"), TEXT("foot_l")); ++S.NL; }
+		if (Elvis->GetBoneLocation(TEXT("RightFoot")).Z - Ground < 16.f) { S.SideR += Side(Elvis, TEXT("RightUpLeg"), TEXT("RightFoot")); S.QSideR += Side(Quinn, TEXT("thigh_r"), TEXT("foot_r")); ++S.NR; }
+		S.BowL0 = FMath::Min(S.BowL0, BL); S.BowL1 = FMath::Max(S.BowL1, BL); S.BowR0 = FMath::Min(S.BowR0, BR); S.BowR1 = FMath::Max(S.BowR1, BR);
+		// Which way his body faces relative to the way he's going (+ = turned to his right): the hip line and the shoulders.
+		const FVector Fwd = Player->GetActorForwardVector();
+		auto Facing = [&Fwd, &Right](const FVector& LeftSide, const FVector& RightSide) { const FVector V = LeftSide - RightSide; return FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(V, Fwd), FVector::DotProduct(V, -Right))); };
+		S.HipYaw += Facing(Elvis->GetBoneLocation(TEXT("LeftUpLeg")), Elvis->GetBoneLocation(TEXT("RightUpLeg")));
+		S.ChestYaw += Facing(Elvis->GetBoneLocation(TEXT("LeftArm")), Elvis->GetBoneLocation(TEXT("RightArm")));
+		// Which way each foot points (+ = toe turned to his right), and which way each knee points (the knee's sideways
+		// offset from the hip-ankle line, signed so + = knee points out), on Elvis and on the hidden Quinn.
+		{
+			auto Toe = [&Fwd, &Right](USkeletalMeshComponent* Mesh, FName Foot, FName Ball)
+			{
+				const FVector D = Mesh->GetBoneLocation(Ball) - Mesh->GetBoneLocation(Foot);
+				return FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(D, Right), FVector::DotProduct(D, Fwd)));
+			};
+			const float TL = Toe(Elvis, TEXT("LeftFoot"), TEXT("LeftToeBase")), TR = Toe(Elvis, TEXT("RightFoot"), TEXT("RightToeBase"));
+			const float QL = Toe(Quinn, TEXT("foot_l"), TEXT("ball_l")), QR = Toe(Quinn, TEXT("foot_r"), TEXT("ball_r"));
+			S.ToeL0 = FMath::Min(S.ToeL0, TL); S.ToeL1 = FMath::Max(S.ToeL1, TL); S.ToeR0 = FMath::Min(S.ToeR0, TR); S.ToeR1 = FMath::Max(S.ToeR1, TR);
+			S.QToeL0 = FMath::Min(S.QToeL0, QL); S.QToeL1 = FMath::Max(S.QToeL1, QL); S.QToeR0 = FMath::Min(S.QToeR0, QR); S.QToeR1 = FMath::Max(S.QToeR1, QR);
+			const float KL = -BL, KR = BR;     // out = away from the middle
+			// through the whole stride: each foot's twist about its own shin (+ = toe out), skipping toe-straight-down moments
+			auto Twist = [&Fwd](USkeletalMeshComponent* Mesh, FName Calf, FName Foot, FName Ball, float OutSign, TArray<float>& Into)
+			{
+				const FVector Knee = Mesh->GetBoneLocation(Calf), Ankle = Mesh->GetBoneLocation(Foot), Toe = Mesh->GetBoneLocation(Ball);
+				const FVector Shin = (Knee - Ankle).GetSafeNormal();
+				const FVector F = FVector::VectorPlaneProject(Toe - Ankle, Shin), R = FVector::VectorPlaneProject(Fwd, Shin);
+				if (F.Size() < 4.f || R.Size() < 0.3f) { return; }
+				// + about the shin (up) turns the toe toward his right
+				const float A = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(FVector::CrossProduct(R.GetSafeNormal(), F.GetSafeNormal()), Shin), FVector::DotProduct(R.GetSafeNormal(), F.GetSafeNormal())));
+				Into.Add(A * OutSign);
+			};
+			Twist(Elvis, TEXT("LeftLeg"), TEXT("LeftFoot"), TEXT("LeftToeBase"), -1.f, S.TwL);
+			Twist(Elvis, TEXT("RightLeg"), TEXT("RightFoot"), TEXT("RightToeBase"), 1.f, S.TwR);
+			// hands: finger curl (hand to the middle finger's last joint) and wrist bend (forearm vs hand), degrees
+			auto Angle = [](const FVector& A, const FVector& B) { return FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(A.GetSafeNormal(), B.GetSafeNormal()), -1.f, 1.f))); };
+			for (int32 Hand = 0; Hand < 2; ++Hand)
+			{
+				const FString P = Hand ? TEXT("Right") : TEXT("Left");
+				const FVector Elbow = Elvis->GetBoneLocation(*(P + TEXT("ForeArm"))), Wrist = Elvis->GetBoneLocation(*(P + TEXT("Hand")));
+				const FVector M1 = Elvis->GetBoneLocation(*(P + TEXT("HandMiddle1"))), M2 = Elvis->GetBoneLocation(*(P + TEXT("HandMiddle2"))), M3 = Elvis->GetBoneLocation(*(P + TEXT("HandMiddle3")));
+				(Hand ? S.CurlR : S.CurlL) += Angle(M1 - Wrist, M3 - M2);
+				(Hand ? S.WristR : S.WristL) += Angle(Wrist - Elbow, M1 - Wrist);
+			}
+			// while planted: average direction, + = toe out
+			if (Elvis->GetBoneLocation(TEXT("LeftFoot")).Z - Ground < 16.f) { S.PToeL += -TL; S.PQToeL += -QL; ++S.PL; }
+			if (Elvis->GetBoneLocation(TEXT("RightFoot")).Z - Ground < 16.f) { S.PToeR += TR; S.PQToeR += QR; ++S.PR; }
+			S.KneeL0 = FMath::Min(S.KneeL0, KL); S.KneeL1 = FMath::Max(S.KneeL1, KL); S.KneeR0 = FMath::Min(S.KneeR0, KR); S.KneeR1 = FMath::Max(S.KneeR1, KR);
+		}
+		// Sideways tilt (+ = to his right): one hip higher than the other, and the neck leaning off the hips.
+		{
+			const FVector HL = Elvis->GetBoneLocation(TEXT("LeftUpLeg")), HR = Elvis->GetBoneLocation(TEXT("RightUpLeg"));
+			S.HipRoll += FMath::RadiansToDegrees(FMath::Atan2(HL.Z - HR.Z, FVector::Dist2D(HL, HR)));
+			const FVector Hips = Elvis->GetBoneLocation(TEXT("Hips")), Neck = Elvis->GetBoneLocation(TEXT("Neck"));
+			S.SpineLean += FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Neck - Hips, Right), Neck.Z - Hips.Z));
+		}
+		++S.N;
+	}), 0.02f, true);
+	auto Report = [Stats, Player](const TCHAR* Phase)
+	{
+		const FLegStats& S = *Stats;
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s speed %4.0f  Elvis lowest foot L %5.1f R %5.1f cm | Quinn L %5.1f R %5.1f | knee bow (+ = to his right) L %+5.1f..%+5.1f R %+5.1f..%+5.1f  (%d samples)"),
+			Phase, Player->GetVelocity().Size2D(), S.LowL, S.LowR, S.QLowL, S.QLowR, S.BowL0, S.BowL1, S.BowR0, S.BowR1, S.N);
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s planted foot sideways from its hip (+ = to his right): Elvis L %+5.1f R %+5.1f | Quinn L %+5.1f R %+5.1f"),
+			Phase, S.NL ? S.SideL / S.NL : 0.f, S.NR ? S.SideR / S.NR : 0.f, S.NL ? S.QSideL / S.NL : 0.f, S.NR ? S.QSideR / S.NR : 0.f);
+		auto Spread = [](TArray<float> A) { if (A.Num() < 3) { return FString(TEXT("-")); } A.Sort(); float Sum = 0.f; for (float V : A) { Sum += V; } return FString::Printf(TEXT("mean %+4.0f (10%%-90%%: %+4.0f..%+4.0f)"), Sum / A.Num(), A[A.Num() / 10], A[A.Num() * 9 / 10]); };
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s hands: finger curl L %4.0f R %4.0f deg, wrist bend L %4.0f R %4.0f deg"), Phase,
+			S.N ? S.CurlL / S.N : 0.f, S.N ? S.CurlR / S.N : 0.f, S.N ? S.WristL / S.N : 0.f, S.N ? S.WristR / S.N : 0.f);
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s ankle twist through the stride (+ = toe out): left %s | right %s"), Phase, *Spread(S.TwL), *Spread(S.TwR));
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s planted feet point (+ = toe out): Elvis L %+5.1f R %+5.1f deg | Quinn L %+5.1f R %+5.1f deg"),
+			Phase, S.PL ? S.PToeL / S.PL : 0.f, S.PR ? S.PToeR / S.PR : 0.f, S.PL ? S.PQToeL / S.PL : 0.f, S.PR ? S.PQToeR / S.PR : 0.f);
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s feet point (+ = toe to his right): Elvis L %+4.0f..%+4.0f R %+4.0f..%+4.0f deg | Quinn L %+4.0f..%+4.0f R %+4.0f..%+4.0f deg | Elvis knees out (+) / in (-): L %+4.1f..%+4.1f R %+4.1f..%+4.1f cm"),
+			Phase, S.ToeL0, S.ToeL1, S.ToeR0, S.ToeR1, S.QToeL0, S.QToeL1, S.QToeR0, S.QToeR1, S.KneeL0, S.KneeL1, S.KneeR0, S.KneeR1);
+		UE_LOG(LogTemp, Display, TEXT("[LegShot] %-10s body facing vs travel (+ = turned to his right): hips %+5.1f deg, shoulders %+5.1f deg | tilt (+ = to his right): hips %+5.1f deg, spine %+5.1f deg"),
+			Phase, S.N ? S.HipYaw / S.N : 0.f, S.N ? S.ChestYaw / S.N : 0.f, S.N ? S.HipRoll / S.N : 0.f, S.N ? S.SpineLean / S.N : 0.f);
+		*Stats = FLegStats();
+	};
+	const FVector Ahead = Player->GetActorForwardVector().GetSafeNormal2D();
+	const FVector Side = FVector::CrossProduct(FVector::UpVector, Ahead);
+	auto Knee = [this, Player](FVector Offset) { const FVector P = Player->GetActorLocation(); ShootFrom(P + Offset, P - FVector(0.f, 0.f, 40.f)); };
+	After(0.1f, [Stats]() { *Stats = FLegStats(); });
+	After(1.6f, [Knee, Ahead]() { Knee(Ahead * 260.f - FVector(0.f, 0.f, 50.f)); });
+	After(1.9f, [this]() { Shot(TEXT("legs_0_idle_front")); });
+	After(2.0f, [Knee, Side]() { Knee(Side * 260.f - FVector(0.f, 0.f, 50.f)); });
+	After(2.3f, [this]() { Shot(TEXT("legs_1_idle_side")); });
+	After(2.5f, [Report]() { Report(TEXT("idle")); });
+	After(2.6f, [this, Ahead]() { MoveInput = Ahead; });
+	After(4.0f, [Report]() { Report(TEXT("run start")); });
+	After(5.4f, [Knee, Side]() { Knee(Side * 330.f - FVector(0.f, 0.f, 40.f)); });
+	After(5.5f, [this]() { Shot(TEXT("legs_2_run_side")); });
+	After(5.6f, [Report]() { Report(TEXT("run")); });
+	After(4.8f, [this, Elvis, Player]() { const FVector H = Elvis->GetBoneLocation(TEXT("RightHand")); ShootFrom(H + Player->GetActorRightVector() * 70.f + Player->GetActorForwardVector() * 20.f + FVector(0.f, 0.f, 10.f), H); });
+	After(4.85f, [this]() { Shot(TEXT("legs_hand_right")); });
+	// Legs without the cape in the way (its bones hidden, which hides the skin weighted to them): from behind at hip
+	// height through several strides, and side on.
+	After(3.0f, [Elvis]() { for (const TCHAR* Bone : { TEXT("Cape_L_01"), TEXT("Cape_M_01"), TEXT("Cape_R_01") }) { Elvis->HideBoneByName(FName(Bone), EPhysBodyOp::PBO_None); } });
+	for (int32 i = 0; i < 8; ++i)
+	{
+		After(3.1f + i * 0.08f, [this, Player, i]()
+		{
+			const FVector P = Player->GetActorLocation();
+			ShootFrom(P - Player->GetActorForwardVector() * 330.f + FVector(0.f, 0.f, -10.f), P - FVector(0.f, 0.f, 40.f));
+		});
+		After(3.15f + i * 0.08f, [this, i]() { Shot(FString::Printf(TEXT("legs_nocape_%d"), i)); });
+	}
+	After(3.9f, [Elvis]() { for (const TCHAR* Bone : { TEXT("Cape_L_01"), TEXT("Cape_M_01"), TEXT("Cape_R_01") }) { Elvis->UnHideBoneByName(FName(Bone)); } });
+	for (int32 i = 0; i < 8; ++i)    // the game's own follow camera, as the player sees him: running straight, then steering left
+	{
+		After(3.6f + i * 0.09f, [this, Player, i]() { if (APlayerController* PC = Cast<APlayerController>(Player->GetController())) { PC->SetViewTarget(Player); } Shot(FString::Printf(TEXT("legs_cam_straight_%d"), i)); });
+		After(7.2f + i * 0.09f, [this, Player, i]() { if (APlayerController* PC = Cast<APlayerController>(Player->GetController())) { PC->SetViewTarget(Player); } Shot(FString::Printf(TEXT("legs_cam_left_%d"), i)); });
+	}
+	// From behind and a little above, like the player's camera, mid-run: Elvis, then the hidden Quinn in the same pose
+	// (to tell a bent skeleton from a bent skin).
+	After(4.2f, [this, Player]() { const FVector P = Player->GetActorLocation(); ShootFrom(P - Player->GetActorForwardVector() * 280.f + FVector(0.f, 0.f, 60.f), P - FVector(0.f, 0.f, 30.f)); });
+	After(4.35f, [this]() { Shot(TEXT("legs_5_run_behind_elvis")); });
+	After(4.4f, [Elvis, Player]() { Elvis->SetVisibility(false, true); Player->GetMesh()->SetHiddenInGame(false); Player->GetMesh()->SetVisibility(true); });
+	After(4.45f, [this, Player]() { const FVector P = Player->GetActorLocation(); ShootFrom(P - Player->GetActorForwardVector() * 280.f + FVector(0.f, 0.f, 60.f), P - FVector(0.f, 0.f, 30.f)); });
+	After(4.6f, [this]() { Shot(TEXT("legs_6_run_behind_quinn")); });
+	After(4.7f, [Elvis, Player]() { Elvis->SetVisibility(true, true); Player->GetMesh()->SetHiddenInGame(true); });
+	for (int32 i = 0; i < 60; ++i)
+	{
+		After(5.7f + i * 0.04f, [this, Ahead, i]() { MoveInput = Ahead.RotateAngleAxis(-i * 3.f, FVector::UpVector); });   // curving left
+	}
+	After(7.0f, [this, Knee, Player]() { Knee(-Player->GetActorRightVector() * 330.f + Player->GetActorForwardVector() * 80.f - FVector(0.f, 0.f, 40.f)); });
+	After(7.1f, [this]() { Shot(TEXT("legs_3_curve_left")); });
+	After(8.1f, [Report]() { Report(TEXT("curve left")); });
+	After(8.2f, [this, Player]() { MoveInput = Player->GetActorForwardVector() * 0.3f; });
+	After(9.6f, [this, Knee, Player]() { Knee(Player->GetActorRightVector() * 300.f - FVector(0.f, 0.f, 40.f)); });
+	After(9.7f, [this]() { Shot(TEXT("legs_4_walk_side")); });
+	After(9.8f, [Report]() { Report(TEXT("walk")); });
+	After(10.0f, []() { FPlatformMisc::RequestExit(false); });
+}
+
+void UGroundCheckSubsystem::StartStepShot()
+{
+	// Footsteps by surface (DustComponent logs each step during test runs): the player is dropped onto open sand,
+	// the forum's paving, the basilica's stone floor, the theatre's wooden stage, a big sandstone rock and the gravel
+	// road north of the town in the Rome map (L_Rome), and walks, then runs, a few seconds on each.
+	UWorld* World = GetWorld();
+	ACharacter* Player = UGameplayStatics::GetPlayerCharacter(World, 0);
+	if (!Player)
+	{
+		FPlatformMisc::RequestExit(false);
+		return;
+	}
+	const FVector C(-44.f, -5.f, 0.f);
+	struct FSpot { const TCHAR* Name; FVector2D At; float Z; FVector2D Walk; };
+	const FSpot Spots[] = {
+		{ TEXT("sand"), FVector2D(60.f, 60.f), 3.f, FVector2D(1.f, 0.f) },
+		{ TEXT("paving"), FVector2D(-20.f, 300.f), 4.f, FVector2D(0.f, 1.f) },
+		{ TEXT("basilica floor"), FVector2D(-10.f, 414.f), 5.f, FVector2D(1.f, 0.f) },
+		{ TEXT("theatre stage"), FVector2D(220.f, 318.f), 5.5f, FVector2D(0.f, 1.f) },
+		{ TEXT("rock"), FVector2D(1072.6f, 1473.7f), 98.f, FVector2D(0.2f, 1.f) },
+		{ TEXT("gravel road"), FVector2D(1.f, 600.f), 10.f, FVector2D(0.f, 1.f) },
+		{ TEXT("basilica door"), FVector2D(0.f, 386.f), 4.f, FVector2D(0.f, 1.f) } };      // in from the forum, through the middle door
+	World->GetTimerManager().SetTimer(MoveTimer, FTimerDelegate::CreateWeakLambda(this, [this, Player]()
+	{
+		if (!MoveInput.IsNearlyZero())
+		{
+			Player->AddMovementInput(MoveInput.GetSafeNormal(), MoveInput.Size());
+		}
+	}), 0.005f, true);
+	float At = 0.2f;
+	for (const FSpot& Spot : Spots)
+	{
+		const FVector Where = C + FVector(Spot.At.X, Spot.At.Y, Spot.Z) * 100.f;
+		const FVector Dir(Spot.Walk.X, Spot.Walk.Y, 0.f);
+		const FString Name = Spot.Name;
+		After(At, [this, Player, Where, Name]()
+		{
+			MoveInput = FVector::ZeroVector;
+			Player->GetCharacterMovement()->StopMovementImmediately();
+			Player->TeleportTo(Where, Player->GetActorRotation());
+			UE_LOG(LogTemp, Display, TEXT("[StepShot] on %s"), *Name);
+		});
+		After(At + 2.5f, [this, Dir]() { MoveInput = Dir * 0.3f; });           // walk
+		After(At + 4.5f, [this, Dir]() { MoveInput = Dir; });                  // run
+		After(At + 6.f, [this, Player, Name]()
+		{
+			ShootFrom(Player->GetActorLocation() + FVector(-300.f, -300.f, 250.f), Player->GetActorLocation());
+		});
+		After(At + 6.3f, [this, Name]() { Shot(TEXT("steps_") + Name.Replace(TEXT(" "), TEXT("_"))); });
+		After(At + 6.4f, [Player, C, Name]() { const FVector P = (Player->GetActorLocation() - C) / 100.f; UE_LOG(LogTemp, Display, TEXT("[StepShot] %s: ended at (%.1f, %.1f) m"), *Name, P.X, P.Y); });
+		At += 6.5f;
+	}
+	After(At, []() { FPlatformMisc::RequestExit(false); });
+}
+
 void UGroundCheckSubsystem::StartMoveShot()
 {
 	UWorld* World = GetWorld();
@@ -619,7 +959,28 @@ void UGroundCheckSubsystem::StartMapShot()
 		{ TEXT("map_temple_inside"), Temple.TransformPosition(FVector(550.f, 250.f, 480.f)), Temple.TransformPosition(FVector(-1300.f, -100.f, 500.f)) },
 		{ TEXT("map_north"), C + FVector(0.f, -22000.f, 16000.f), C + FVector(0.f, 30000.f, 0.f) },
 		{ TEXT("map_gate"), C + FVector(1200.f, 9000.f, 250.f), C + FVector(0.f, 3500.f, 700.f) },
-		{ TEXT("map_oasis"), C + FVector(40000.f, 6000.f, 1800.f), C + FVector(56000.f, 17000.f, -300.f) } };
+		{ TEXT("map_oasis"), C + FVector(40000.f, 6000.f, 1800.f), C + FVector(56000.f, 17000.f, -300.f) },
+		// The landmarks (build_rome_landmarks.py): the basilica on the forum, the baths, the theatre, the town walls.
+		{ TEXT("map_landmarks_air"), M(330.f, 170.f, 90.f), M(40.f, 360.f, 0.f) },
+		{ TEXT("map_basilica"), G(-6.f, 352.f, 1.8f), M(0.f, 405.f, 10.f) },
+		{ TEXT("map_basilica_inside"), M(-38.f, 414.5f, 5.3f), M(30.f, 414.5f, 8.f) },
+		{ TEXT("map_baths"), G(-66.f, 336.f, 1.8f), M(-81.f, 302.f, 11.f) },
+		{ TEXT("map_baths_air"), M(-35.f, 255.f, 45.f), M(-81.f, 299.f, 5.f) },
+		{ TEXT("map_theatre"), M(150.f, 268.f, 38.f), M(212.f, 330.f, 0.f) },
+		{ TEXT("map_theatre_stage"), M(220.f, 333.f, 5.2f), M(188.f, 330.f, 7.f) },
+		{ TEXT("map_wall_gate"), G(14.f, 532.f, 1.8f), M(0.f, 490.f, 7.f) },
+		// The land beyond the town (rterrain.py): the northern range and its pass, mesas and buttes, the canyon, the
+		// dune sea. Heights come from the heightmap, since far tiles may not have collision loaded around the camera.
+		{ TEXT("map_range"), M(0.f, 300.f, 110.f), M(0.f, 1150.f, 90.f) },
+		{ TEXT("map_range_gate"), M(6.f, 525.f, 4.9f), M(-120.f, 1100.f, 70.f) },
+		{ TEXT("map_pass"), M(4.f, 950.f, 34.4f), M(0.f, 1400.f, 45.f) },
+		{ TEXT("map_mesas"), M(560.f, 300.f, 3.4f), M(980.f, 470.f, 40.f) },
+		{ TEXT("map_mesas_air"), M(250.f, -150.f, 110.f), M(800.f, -500.f, 20.f) },
+		{ TEXT("map_canyon"), M(-520.f, -449.f, -0.8f), M(-780.f, -590.f, 3.f) },
+		{ TEXT("map_canyon_air"), M(-420.f, -250.f, 120.f), M(-850.f, -650.f, 0.f) },
+		{ TEXT("map_dunes"), M(0.f, -500.f, 43.3f), M(150.f, -1200.f, 50.f) },
+		{ TEXT("map_from_temple"), M(-300.f, 500.f, 32.f), M(-820.f, 1000.f, 100.f) },
+		{ TEXT("map_rocks"), M(770.f, 431.f, 17.f), M(789.f, 450.f, 13.f) } };          // fallen blocks at a mesa's foot (build_rome_rocks.py)
 	float At = 0.2f;
 	for (const FView& View : Views)
 	{
