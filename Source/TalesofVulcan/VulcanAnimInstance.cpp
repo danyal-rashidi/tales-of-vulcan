@@ -110,10 +110,10 @@ void FVulcanAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float De
 
 UVulcanAnimInstance::UVulcanAnimInstance()
 {
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> Idle(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Idle.A_VulcanOtter_Idle"));
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> Walk(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Walk.A_VulcanOtter_Walk"));
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> Run(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Run.A_VulcanOtter_Run"));
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> Statue(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Statue.A_VulcanOtter_Statue"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> Idle(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Idle.A_VulcanGod_Idle"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> Walk(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Walk.A_VulcanGod_Walk"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> Run(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Run.A_VulcanGod_Run"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> Statue(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Statue.A_VulcanGod_Statue"));
 	IdleAnimation = Idle.Object;
 	WalkAnimation = Walk.Object;
 	RunAnimation = Run.Object;

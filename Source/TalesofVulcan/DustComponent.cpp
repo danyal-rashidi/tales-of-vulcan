@@ -137,7 +137,8 @@ const TCHAR* UDustComponent::StepSoundUnderfoot() const
 		}
 		return Hit.ImpactNormal.Z < 0.85f ? TEXT("Step_Gravel") : TEXT("Step_Sand");
 	}
-	// Meshes: go by the material under the foot (our Rome materials are named for what they are).
+	// Meshes: go by the material under the foot (our Rome materials are named for what they are;
+	// MI_fort_01_* are the kit town's masonry, plaster and walls).
 	const UPrimitiveComponent* Component = Hit.GetComponent();
 	const UMaterialInterface* Material = nullptr;
 	if (Component)
@@ -155,7 +156,7 @@ const TCHAR* UDustComponent::StepSoundUnderfoot() const
 	{
 		return TEXT("Step_Gravel");
 	}
-	for (const TCHAR* Stone : { TEXT("Plaster"), TEXT("Ashlar"), TEXT("Brick"), TEXT("Stone"), TEXT("Surface"), TEXT("Marble"), TEXT("Tile"), TEXT("Paving") })
+	for (const TCHAR* Stone : { TEXT("Plaster"), TEXT("Ashlar"), TEXT("Brick"), TEXT("Stone"), TEXT("Surface"), TEXT("Marble"), TEXT("Tile"), TEXT("Paving"), TEXT("_fort_"), TEXT("cliff"), TEXT("Plaster") })
 	{
 		if (Name.Contains(Stone))
 		{

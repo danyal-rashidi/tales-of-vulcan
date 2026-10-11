@@ -980,10 +980,24 @@ void UGroundCheckSubsystem::StartMapShot()
 		{ TEXT("map_canyon_air"), M(-420.f, -250.f, 120.f), M(-850.f, -650.f, 0.f) },
 		{ TEXT("map_dunes"), M(0.f, -500.f, 43.3f), M(150.f, -1200.f, 50.f) },
 		{ TEXT("map_from_temple"), M(-300.f, 500.f, 32.f), M(-820.f, 1000.f, 100.f) },
-		{ TEXT("map_rocks"), M(770.f, 431.f, 17.f), M(789.f, 450.f, 13.f) } };          // fallen blocks at a mesa's foot (build_rome_rocks.py)
+		{ TEXT("map_rocks"), M(770.f, 431.f, 17.f), M(789.f, 450.f, 13.f) },          // fallen blocks at a mesa's foot (build_rome_rocks.py)
+		// The kit-built test houses (build_kit_houses.py) on the street at x = 56 m: a front close up, the row from across
+		// the street, and the block from above.
+		{ TEXT("map_kit_front"), G(57.5f, 193.f, 1.8f), G(54.f, 201.f, 2.2f) },
+		{ TEXT("map_kit_row"), G(57.f, 230.f, 1.8f), G(50.f, 205.f, 4.f) },
+		{ TEXT("map_kit_air"), M(85.f, 180.f, 28.f), M(55.f, 225.f, 0.f) } };
+	// -ShotOnly=map_street,map_kit_front films just those views (quicker when checking one thing).
+	FString Only;
+	FParse::Value(FCommandLine::Get(), TEXT("ShotOnly="), Only, /*bShouldStopOnSeparator=*/false);
+	TArray<FString> OnlyNames;
+	Only.ParseIntoArray(OnlyNames, TEXT(","));
 	float At = 0.2f;
 	for (const FView& View : Views)
 	{
+		if (!OnlyNames.IsEmpty() && !OnlyNames.Contains(View.Name))
+		{
+			continue;
+		}
 		const FVector Eye = View.Eye, Look = View.Look;
 		const FString Name = View.Name;
 		After(At, [this, Eye, Look]() { ShootFrom(Eye, Look); });
@@ -1157,8 +1171,11 @@ void UGroundCheckSubsystem::StartRomeShot()
 
 void UGroundCheckSubsystem::StartOtterShot()
 {
-	// The rigged otter Vulcan, close up: statue, waking up, each attack, a flinch, death. The player can't die
-	// (a death would reload the level mid-run) and Vulcan only does the attacks asked for.
+	// The rigged Vulcan (the god-king), close up: statue, waking up, each attack (the sword slam first), a flinch,
+	// death. The player can't die (a death would reload the level mid-run) and Vulcan only does the attacks asked for.
+	// Textures and shaders may still be building on a first run (a fresh import shows grey placeholders); film only
+	// once they're done.
+	FAssetCompilingManager::Get().FinishAllCompilation();
 	UWorld* World = GetWorld();
 	TActorIterator<AVulcanBoss> It(World);
 	AVulcanBoss* Boss = It ? *It : nullptr;
@@ -1231,7 +1248,7 @@ void UGroundCheckSubsystem::StartOtterShot()
 		{
 			if (AVulcanBoss* B = WeakBoss.Get())
 			{
-				B->bEnableTailLash = B->bEnableSpit = B->bEnableBreath = B->bEnableDive = false;
+				B->bEnableSwordSlam = B->bEnableSpit = B->bEnableBreath = B->bEnableDive = false;
 				B->AggroRange = 4000.f;
 				const UCapsuleComponent* Capsule = B->GetCapsuleComponent();
 				const FCollisionShape Shape = FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight() * 0.8f);
@@ -1271,7 +1288,7 @@ void UGroundCheckSubsystem::StartOtterShot()
 		return;
 	}
 	Burst(TEXT("b_awaken"), 1.4f, 0.6f, 12);          // lightning, shaking, wake-up roar
-	After(9.2f, [Attack]() { Attack(EVulcanAttack::TailLash); });
+	After(9.2f, [Attack]() { Attack(EVulcanAttack::SwordSlam); });
 	Burst(TEXT("c_taillash"), 9.2f, 0.12f, 13);
 	After(11.6f, [Attack]() { Attack(EVulcanAttack::ObsidianSpit); });
 	Burst(TEXT("d_spit"), 11.6f, 0.12f, 10);

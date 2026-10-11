@@ -399,9 +399,9 @@ void AMainMenuGameMode::SpawnElvis(const FVector& Location, float Yaw)
 void AMainMenuGameMode::SpawnStatue(const FVector& Location, float Yaw, float Scale)
 {
 	// Vulcan as the bronze statue he starts the fight as, huge, half lost in the fog.
-	USkeletalMesh* Otter = MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/Otter/SK_VulcanOtter.SK_VulcanOtter"));
-	UAnimSequence* Pose = MenuSet::Load<UAnimSequence>(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Statue.A_VulcanOtter_Statue"));
-	UMaterialInterface* Skin = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/Otter/M_VulcanOtter.M_VulcanOtter"));
+	USkeletalMesh* Otter = MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
+	UAnimSequence* Pose = MenuSet::Load<UAnimSequence>(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Statue.A_VulcanGod_Statue"));
+	UMaterialInterface* Skin = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/God/MI_VulcanGod.MI_VulcanGod"));
 	if (!Otter || !Set)
 	{
 		return;

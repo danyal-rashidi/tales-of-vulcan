@@ -16,7 +16,7 @@ UENUM(BlueprintType)
 enum class EVulcanAttack : uint8
 {
 	None,
-	TailLash,
+	SwordSlam,
 	ObsidianSpit,
 	MoltenBreath,
 	MagmaDive
@@ -109,9 +109,16 @@ public:
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TObjectPtr<UPointLightComponent> CoreGlow;
 
-	/** Molten Breath and Obsidian Spit come out here: the rigged otter model's "mouth" bone. */
+	/** Molten Breath and Obsidian Spit come out here: the rigged model's "mouth" bone. */
 	UPROPERTY(VisibleAnywhere, Category="Vulcan|Otter Body")
 	TObjectPtr<USceneComponent> MouthPoint;
+
+	/** His greatsword (Fab's Fantasy_Sword), in his right hand; GripSword fits it to the hand at BeginPlay. */
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Sword")
+	TObjectPtr<UStaticMeshComponent> Sword;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword")
+	float SwordScale = 1.15f;
 
 	/**
 	 * Once provoked (the statue awakens, the fight starts, or Vulcan gets hit) the original otter turns into the
@@ -326,9 +333,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
 	TObjectPtr<UAnimSequenceBase> DeathAnimation;
 
-	/** Tail Lash: wind up, spin with the tail out. */
+	/** Sword Slam: leap, sword overhead, bring it down into the ground. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
-	TObjectPtr<UAnimSequenceBase> TailLashAnimation;
+	TObjectPtr<UAnimSequenceBase> SwordSlamAnimation;
 
 	/** Obsidian Spit: rear back, snap the head forward. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Animations")
@@ -362,30 +369,38 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Phase Two")
 	float PhaseTwoDamageMultiplier = 1.25f;
 
-	// ---------------------------------------------------------------- Tail Lash
+	// ---------------------------------------------------------------- Sword Slam
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	bool bEnableTailLash = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	bool bEnableSwordSlam = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	TObjectPtr<UAnimMontage> TailLashMontage;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	TObjectPtr<UAnimMontage> SwordSlamMontage;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	float TailLashDamage = 30.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamDamage = 35.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	float TailLashRange = 350.f;
+	/** The blade's reach in front of Vulcan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamRange = 420.f;
 
-	/** Total width of the swipe in front of Vulcan. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	float TailLashArcDegrees = 160.f;
+	/** Total width of the swing in front of Vulcan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamArcDegrees = 70.f;
 
-	/** Seconds from start of the attack until the hit lands. Match it to the animation. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	float TailLashHitDelay = 0.7f;
+	/** Where the blade hits the ground, this far in front of him: a shockwave of fire this wide hurts too. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamImpactDistance = 330.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Tail Lash")
-	float TailLashDuration = 1.5f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamImpactRadius = 280.f;
+
+	/** Seconds from start of the attack until the blade hits the ground (A_VulcanGod_JumpSlam: ~1.1 s). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamHitDelay = 1.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword Slam")
+	float SwordSlamDuration = 2.1f;
 
 	// ---------------------------------------------------------------- Obsidian Spit
 
@@ -660,8 +675,9 @@ private:
 	bool TryStartAttack(float DistanceToPlayer);
 	void FinishAttack();
 
-	void StartTailLash();
-	void TailLashHit();
+	void StartSwordSlam();
+	void SwordSlamHit();
+	void GripSword();
 
 	void StartSpit();
 	void SpitFire();

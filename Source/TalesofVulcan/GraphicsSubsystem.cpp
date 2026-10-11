@@ -41,7 +41,7 @@ void UGraphicsSubsystem::Apply()
 			Var->Set(Value, ECVF_SetByGameSetting);
 		}
 	};
-	Set(TEXT("r.Tonemapper.Sharpen"), 0.6f);
+	Set(TEXT("r.Tonemapper.Sharpen"), 0.3f);   // lower: the generated buildings' detailed textures went crunchy at 0.6
 	Set(TEXT("r.Lumen.HardwareRayTracing"), 1.f);   // Lumen falls back to software tracing on cards without ray tracing
 	Set(TEXT("r.VolumetricFog.GridPixelSize"), 8.f);
 

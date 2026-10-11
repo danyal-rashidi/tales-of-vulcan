@@ -24,6 +24,8 @@
 #include "DriftParticles.h"
 #include "EarthquakeCameraShake.h"
 #include "FireFX.h"
+#include "SlamCameraShake.h"
+#include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -196,30 +198,31 @@ AVulcanBoss::AVulcanBoss()
 	DeathAnimation = Death.Object;
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
 
-	// The rigged otter model (Content/Vulcan/Otter) with its own animations, run by UVulcanAnimInstance.
+	// The rigged model (Content/Vulcan/God: the god-king, with the otter's moves retargeted onto him and the player's
+	// great-sword jump attack as his sword slam), run by UVulcanAnimInstance.
 	// Without it, the mannequin above wears the shape otter instead.
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> OtterModel(TEXT("/Game/Vulcan/Otter/SK_VulcanOtter.SK_VulcanOtter"));
-	if (OtterModel.Succeeded())
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> GodModel(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
+	if (GodModel.Succeeded())
 	{
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterRoar(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Roar.A_VulcanOtter_Roar"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterDive(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Dive.A_VulcanOtter_Dive"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterEmerge(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Emerge.A_VulcanOtter_Emerge"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterHit(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_HitReact.A_VulcanOtter_HitReact"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterDeath(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Death.A_VulcanOtter_Death"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterTailLash(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_TailLash.A_VulcanOtter_TailLash"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterSpit(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Spit.A_VulcanOtter_Spit"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> OtterBreath(TEXT("/Game/Vulcan/Otter/Animations/A_VulcanOtter_Breath.A_VulcanOtter_Breath"));
-		GetMesh()->SetSkeletalMeshAsset(OtterModel.Object);
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodRoar(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Roar.A_VulcanGod_Roar"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodDive(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Dive.A_VulcanGod_Dive"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodEmerge(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Emerge.A_VulcanGod_Emerge"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodHit(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_HitReact.A_VulcanGod_HitReact"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodDeath(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Death.A_VulcanGod_Death"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodSlam(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_JumpSlam.A_VulcanGod_JumpSlam"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodSpit(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Spit.A_VulcanGod_Spit"));
+		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodBreath(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Breath.A_VulcanGod_Breath"));
+		GetMesh()->SetSkeletalMeshAsset(GodModel.Object);
 		GetMesh()->SetAnimInstanceClass(UVulcanAnimInstance::StaticClass());
 		bUseOtterBody = false;
-		RoarAnimation = OtterRoar.Object;
-		JumpAnimation = OtterDive.Object;
-		LandAnimation = OtterEmerge.Object;
-		HitReactAnimation = OtterHit.Object;
-		DeathAnimation = OtterDeath.Object;
-		TailLashAnimation = OtterTailLash.Object;
-		SpitAnimation = OtterSpit.Object;
-		BreathAnimation = OtterBreath.Object;
+		RoarAnimation = GodRoar.Object;
+		JumpAnimation = GodDive.Object;
+		LandAnimation = GodEmerge.Object;
+		HitReactAnimation = GodHit.Object;
+		DeathAnimation = GodDeath.Object;
+		SwordSlamAnimation = GodSlam.Object;
+		SpitAnimation = GodSpit.Object;
+		BreathAnimation = GodBreath.Object;
 	}
 	else
 	{
@@ -229,6 +232,16 @@ AVulcanBoss::AVulcanBoss()
 
 	MouthPoint = CreateDefaultSubobject<USceneComponent>(TEXT("MouthPoint"));
 	MouthPoint->SetupAttachment(GetMesh(), TEXT("mouth"));
+
+	Sword = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Sword"));
+	Sword->SetupAttachment(GetMesh(), TEXT("hand_r"));
+	Sword->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Sword->SetCanEverAffectNavigation(false);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SwordModel(TEXT("/Game/Fab/Fantasy_Sword/fantasysword.fantasysword"));
+	if (SwordModel.Succeeded())
+	{
+		Sword->SetStaticMesh(SwordModel.Object);
+	}
 
 	// Boss-sized, and easy to tell apart from the player mannequin.
 	GetCapsuleComponent()->SetRelativeScale3D(FVector(1.6f));
@@ -291,7 +304,14 @@ void AVulcanBoss::BeginPlay()
 
 	Super::BeginPlay();
 
+	// The Blueprint's mesh still carried the otter's material as an override; on the god-king's UVs it scrambled into a
+	// patchy silver. The rigged model wears its own (MI_VulcanGod).
+	if (!bUseOtterBody)
+	{
+		GetMesh()->EmptyOverrideMaterials();
+	}
 	BuildMontagesFromAnimations();
+	GripSword();
 
 	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
 
@@ -1099,7 +1119,7 @@ void AVulcanBoss::UpdateOtterBody()
 
 	// ---- Tail: drapes to the ground behind and curls to the side. Lashes during Tail Lash.
 	const float GroundZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	const bool bLashing = CurrentAttack == EVulcanAttack::TailLash;
+	const bool bLashing = CurrentAttack == EVulcanAttack::SwordSlam;
 	const float SwayDegrees = bLashing ? FMath::Sin(OtterTime * 14.f) * 50.f : FMath::Sin(OtterTime * 2.5f) * 10.f;
 	const FQuat Sway(Up, FMath::DegreesToRadians(SwayDegrees));
 	const FVector TailRoot = Pelvis - (Fwd * 18.f + Up * 4.f) * S;
@@ -1317,7 +1337,7 @@ void AVulcanBoss::LayoutAwakenedOtter(float S, const FVector& Fwd, const FVector
 	// ---- Tail: about a quarter longer than the original's. Drapes to the ground and curls to the side,
 	// lashing during Tail Lash.
 	const float GroundZ = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	const bool bLashing = CurrentAttack == EVulcanAttack::TailLash;
+	const bool bLashing = CurrentAttack == EVulcanAttack::SwordSlam;
 	const float SwayDegrees = bLashing ? FMath::Sin(OtterTime * 14.f) * 50.f : FMath::Sin(OtterTime * 2.5f) * 10.f;
 	const FQuat Sway(Up, FMath::DegreesToRadians(SwayDegrees));
 	const FVector TailRoot = HipsCenter - (TF * 26.f + TU * 4.f) * S;
@@ -1543,7 +1563,7 @@ bool AVulcanBoss::TryStartAttack(float DistanceToPlayer)
 
 	if (DistanceToPlayer <= MeleeRange)
 	{
-		AddOption(bEnableTailLash, EVulcanAttack::TailLash, 6.f);
+		AddOption(bEnableSwordSlam, EVulcanAttack::SwordSlam, 6.f);
 		AddOption(bEnableBreath, EVulcanAttack::MoltenBreath, 3.f);
 	}
 	else if (DistanceToPlayer <= EffectiveBreathRange * 0.9f)
@@ -1611,7 +1631,7 @@ void AVulcanBoss::PerformAttack(EVulcanAttack Attack)
 
 	switch (Attack)
 	{
-	case EVulcanAttack::TailLash:     StartTailLash(); break;
+	case EVulcanAttack::SwordSlam:    StartSwordSlam(); break;
 	case EVulcanAttack::ObsidianSpit: StartSpit();     break;
 	case EVulcanAttack::MoltenBreath: StartBreath();   break;
 	case EVulcanAttack::MagmaDive:    StartDive();     break;
@@ -1627,30 +1647,92 @@ void AVulcanBoss::FinishAttack()
 
 // ============================================================ Tail Lash
 
-void AVulcanBoss::StartTailLash()
+void AVulcanBoss::StartSwordSlam()
 {
-	PlayMontageScaled(TailLashMontage);
-	GameAudio::Play(this, TEXT("Growl"), GetActorLocation(), 1.3f, 0.7f, 6000.f);
-	Schedule(AttackTimer, &AVulcanBoss::TailLashHit, TailLashHitDelay / GetSpeedScale());
+	FacePlayer();
+	PlayMontageScaled(SwordSlamMontage);
+	GameAudio::Play(this, TEXT("Roar"), GetActorLocation(), 1.4f, 0.55f, 6000.f);
+	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.2f, 0.6f, 5000.f);
+	Schedule(AttackTimer, &AVulcanBoss::SwordSlamHit, SwordSlamHitDelay / GetSpeedScale());
 }
 
-void AVulcanBoss::TailLashHit()
+void AVulcanBoss::SwordSlamHit()
 {
-	const float HalfArc = TailLashArcDegrees * 0.5f;
-	GameAudio::Play(this, TEXT("Swing"), GetActorLocation(), 1.6f, 0.45f, 5000.f);
+	// The blade hits the ground in front of him: a burst of fire, a crack and a thud, the player's camera jolts, and
+	// anyone under the blade or in the shockwave round where it landed is hurt.
+	const float HalfArc = SwordSlamArcDegrees * 0.5f;
+	FVector Impact = GetFeetLocation() + GetActorForwardVector() * SwordSlamImpactDistance;
+	Impact.Z = GetFeetLocation().Z;
+	AFireFX::Spawn(GetWorld(), Impact, AFireFX::BurstPreset(SwordSlamImpactRadius, 150));
+	GameAudio::Play(this, TEXT("Thud"), Impact, 1.7f, 0.45f, 7000.f);
+	GameAudio::Play(this, TEXT("Crack"), Impact, 1.f, 0.7f, 6000.f);
+	GameAudio::Play(this, TEXT("Stones"), Impact, 2.f, 0.8f, 5000.f);
 
 	if (bShowDebug)
 	{
-		const float HalfArcRad = FMath::DegreesToRadians(HalfArc);
-		DrawDebugCone(GetWorld(), GetActorLocation(), GetActorForwardVector(), TailLashRange, HalfArcRad, FMath::DegreesToRadians(10.f), 16, FColor::Orange, false, 0.5f);
+		DrawDebugCone(GetWorld(), GetActorLocation(), GetActorForwardVector(), SwordSlamRange, FMath::DegreesToRadians(HalfArc), FMath::DegreesToRadians(10.f), 16, FColor::Orange, false, 0.5f);
+		DrawDebugCircle(GetWorld(), Impact, SwordSlamImpactRadius, 32, FColor::Red, false, 0.5f, 0, 4.f, FVector(1.f, 0.f, 0.f), FVector(0.f, 1.f, 0.f));
 	}
 
-	if (IsPlayerInCone(TailLashRange, HalfArc))
+	if (APawn* Player = GetPlayer())
 	{
-		DamagePlayer(TailLashDamage);
+		if (APlayerController* PlayerController = Cast<APlayerController>(Player->GetController()))
+		{
+			const float Near = FMath::Clamp(1.f - FVector::Dist(Player->GetActorLocation(), Impact) / 3000.f, 0.f, 1.f);
+			if (Near > 0.f)
+			{
+				PlayerController->ClientStartCameraShake(USlamCameraShake::StaticClass(), 0.5f + Near);
+			}
+		}
+		if (IsPlayerInCone(SwordSlamRange, HalfArc) || FVector::Dist2D(Player->GetActorLocation(), Impact) <= SwordSlamImpactRadius)
+		{
+			DamagePlayer(SwordSlamDamage);
+		}
 	}
 
-	Schedule(AttackTimer, &AVulcanBoss::FinishAttack, (TailLashDuration - TailLashHitDelay) / GetSpeedScale());
+	Schedule(AttackTimer, &AVulcanBoss::FinishAttack, (SwordSlamDuration - SwordSlamHitDelay) / GetSpeedScale());
+}
+
+void AVulcanBoss::GripSword()
+{
+	// Fit the sword into his right fist from the hand's rest pose: the handle (the mesh's +X end, past the cross-guard)
+	// in the palm, the blade out along the knuckles toward the thumb side, as a fist holds a sword.
+	USkeletalMeshComponent* Body = GetMesh();
+	const USkeletalMesh* Model = Body ? Body->GetSkeletalMeshAsset() : nullptr;
+	if (!Sword || !Sword->GetStaticMesh() || !Model || bUseOtterBody)
+	{
+		if (Sword)
+		{
+			Sword->SetVisibility(false);
+		}
+		return;
+	}
+	const FReferenceSkeleton& Ref = Model->GetRefSkeleton();
+	auto RestPose = [&Ref](FName Bone)
+	{
+		FTransform Pose = FTransform::Identity;
+		for (int32 i = Ref.FindBoneIndex(Bone); i != INDEX_NONE; i = Ref.GetParentIndex(i))
+		{
+			Pose = Pose * Ref.GetRefBonePose()[i];
+		}
+		return Pose;
+	};
+	if (Ref.FindBoneIndex(TEXT("RightHandIndex1")) == INDEX_NONE || Ref.FindBoneIndex(TEXT("RightHandPinky1")) == INDEX_NONE)
+	{
+		return;
+	}
+	const FTransform Hand = RestPose(TEXT("hand_r"));
+	const FVector Index = RestPose(TEXT("RightHandIndex1")).GetLocation();
+	const FVector Pinky = RestPose(TEXT("RightHandPinky1")).GetLocation();
+	const FVector Middle = RestPose(TEXT("RightHandMiddle1")).GetLocation();
+	const FVector Blade = (Index - Pinky).GetSafeNormal();
+	const FVector Grip = FMath::Lerp(Hand.GetLocation(), Middle, 0.6f);
+	// The handle's middle in the mesh's own space (its bounds: blade toward -X from the guard at x ~186).
+	const FBox Box = Sword->GetStaticMesh()->GetBoundingBox();
+	const FVector Handle(Box.Max.X - 12.f, Box.GetCenter().Y, Box.GetCenter().Z);
+	const FQuat Turn = FRotationMatrix::MakeFromXZ(-Blade, FVector::UpVector).ToQuat();
+	const FTransform Held(Turn, Grip - Turn.RotateVector(Handle * SwordScale), FVector(SwordScale));
+	Sword->SetRelativeTransform(Held.GetRelativeTransform(Hand));
 }
 
 // ============================================================ Obsidian Spit
@@ -2029,7 +2111,7 @@ void AVulcanBoss::BuildMontagesFromAnimations()
 
 	if (!RoarMontage)      { RoarMontage = MakeMontage(RoarAnimation); }
 	if (!BreathMontage)    { BreathMontage = MakeMontage(BreathAnimation ? BreathAnimation.Get() : RoarAnimation.Get()); }
-	if (!TailLashMontage)  { TailLashMontage = MakeMontage(TailLashAnimation); }
+	if (!SwordSlamMontage) { SwordSlamMontage = MakeMontage(SwordSlamAnimation); }
 	if (!SpitMontage)      { SpitMontage = MakeMontage(SpitAnimation); }
 	if (!DiveMontage)      { DiveMontage = MakeMontage(JumpAnimation); }
 	if (!EmergeMontage)    { EmergeMontage = MakeMontage(LandAnimation); }

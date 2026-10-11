@@ -168,7 +168,6 @@ void UArenaDressingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	WeatherMaterials(InWorld);
 	ColorGrade(InWorld);
 	SetupLighting(InWorld);
-	GameAudio::Loop2D(&InWorld, TEXT("WindLoop"), 0.8f);
 }
 
 void UArenaDressingSubsystem::SetupFog(UWorld& World)
