@@ -1,6 +1,7 @@
 #include "MainMenuGameMode.h"
 #include "DriftParticles.h"
 #include "FlameFX.h"
+#include "GameAudio.h"
 #include "GroundCheckSubsystem.h"
 #include "MainMenuWidget.h"
 #include "ElvisAnimInstance.h"
@@ -44,20 +45,32 @@ namespace MenuSet
 	const TCHAR* Songs[] = { TEXT("/Game/Audio/S_MenuMusic_01.S_MenuMusic_01"), TEXT("/Game/Audio/S_MenuMusic_02.S_MenuMusic_02"),
 		TEXT("/Game/Audio/S_MenuMusic_03.S_MenuMusic_03") };
 
-	// The stage, in cm: the camera looks down +X; Elvis stands left of centre, the title sits in the dark on the right.
-	const FVector CameraAt(-900.f, 40.f, 140.f);
-	const FVector LookAt(300.f, -30.f, 170.f);
-	const FVector ElvisAt(0.f, -90.f, 0.f);
-	const FVector BrazierLeft(380.f, -440.f, 0.f);
-	const FVector BrazierRight(700.f, 430.f, 0.f);
-	const FVector Bonfire(1250.f, -540.f, 0.f);
-	const FVector StatueAt(3400.f, 520.f, 0.f);
-	const FVector CapeWind(-60.f, 260.f, 30.f); // a breeze from the left of the screen lifting Elvis's cape
+	// The stage, in cm, inside the colosseum (centre at the origin, the same size as the arena's: 50 x 40 m outside,
+	// rim 17.5 m). The camera stands near the south wall looking north across the sand at the statue; the menu column
+	// sits in the dark wall on the left, the statue centre-right, Elvis in the right foreground with his back to us.
+	const FVector CameraAt(-2700.f, 420.f, 210.f);
+	const FVector LookAt(0.f, -300.f, 470.f);
+	const FVector StatueAt(0.f, 0.f, 0.f);
+	const float StatueScale = 4.5f;
+	const FVector ElvisAt(-1500.f, 360.f, 0.f);
+	const FVector ColosseumScale(18.96f, 15.03f, 18.6f); // the 530 x 530 x 94 mesh stretched to the arena's size (100 x 80 m, rim 17.5 m)
+	const FVector Braziers[] = { FVector(-480.f, -470.f, 0.f), FVector(-480.f, 470.f, 0.f), FVector(460.f, -470.f, 0.f), FVector(460.f, 470.f, 0.f) };
+	const FVector CapeWind(-40.f, 220.f, 30.f); // the storm wind lifting Elvis's cape
+	const FLinearColor BloodRed(1.f, 0.16f, 0.06f);
 
 	template <typename T>
 	T* Load(const TCHAR* Path)
 	{
 		return LoadObject<T>(nullptr, Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	}
+
+	FVector SunAt()
+	{
+		// Low over the far wall, a little left of the statue, where it sits beside the crown on screen.
+		const FVector Look = (LookAt - CameraAt).GetSafeNormal2D();
+		const float Yaw = FMath::Atan2(Look.Y, Look.X) + FMath::DegreesToRadians(19.f);
+		const float Elevation = FMath::DegreesToRadians(13.5f);
+		return CameraAt + 9000.f * FVector(FMath::Cos(Elevation) * FMath::Cos(Yaw), FMath::Cos(Elevation) * FMath::Sin(Yaw), FMath::Sin(Elevation));
 	}
 }
 
@@ -84,6 +97,7 @@ void AMainMenuGameMode::BeginPlay()
 		return;
 	}
 
+	UMainMenuWidget::ApplySavedVolume();
 	BuildScene();
 	StartMusic();
 
@@ -125,7 +139,7 @@ void AMainMenuGameMode::Tick(float DeltaSeconds)
 			Hud->RemoveFromParent();
 		}
 
-		// A breeze in Elvis's cape (his anim instance exists once he has ticked).
+		// The storm wind in Elvis's cape (his anim instance exists once he has ticked).
 		if (Elvis)
 		{
 			TArray<USkeletalMeshComponent*> Skins;
@@ -144,12 +158,82 @@ void AMainMenuGameMode::Tick(float DeltaSeconds)
 	if (Camera)
 	{
 		const FVector Drift(
-			18.f * FMath::Sin(Time * 0.11f),
-			45.f * FMath::Sin(Time * 0.07f + 1.f) + 12.f * FMath::Sin(Time * 0.19f),
-			14.f * FMath::Sin(Time * 0.13f + 2.f));
+			20.f * FMath::Sin(Time * 0.11f),
+			40.f * FMath::Sin(Time * 0.07f + 1.f) + 10.f * FMath::Sin(Time * 0.19f),
+			12.f * FMath::Sin(Time * 0.13f + 2.f));
 		const FVector Location = CameraBase + Drift;
-		const FVector Target = CameraLookAt + FVector(0.f, 25.f * FMath::Sin(Time * 0.05f), 8.f * FMath::Sin(Time * 0.09f));
+		const FVector Target = CameraLookAt + FVector(0.f, 20.f * FMath::Sin(Time * 0.05f), 8.f * FMath::Sin(Time * 0.09f));
 		Camera->SetActorLocationAndRotation(Location, (Target - Location).Rotation());
+	}
+
+	UpdateStorm(DeltaSeconds);
+}
+
+FVector AMainMenuGameMode::CrownLocation() const
+{
+	// Just above the statue's head bone (the god model uses the mannequin names).
+	if (Statue && Statue->DoesSocketExist(TEXT("head")))
+	{
+		return Statue->GetSocketLocation(TEXT("head")) + FVector(0.f, 0.f, 16.f * MenuSet::StatueScale);
+	}
+	return MenuSet::StatueAt + FVector(0.f, 0.f, 175.f * MenuSet::StatueScale);
+}
+
+void AMainMenuGameMode::UpdateStorm(float DeltaSeconds)
+{
+	// The crown breathes: a slow red pulse with a flicker on top, as if something inside it is awake.
+	if (CrownLight)
+	{
+		const float Pulse = 0.5f + 0.5f * FMath::Sin(Time * 1.7f);
+		const float Flicker = 0.85f + 0.15f * FMath::Sin(Time * 23.f) * FMath::Sin(Time * 7.3f);
+		CrownLight->SetIntensity((120.f + 420.f * Pulse * Pulse) * Flicker);
+		const FVector At = CrownLocation();
+		CrownLight->SetWorldLocation(At);
+		if (CrownEmbers)
+		{
+			CrownEmbers->SetActorLocation(At + FVector(0.f, 0.f, 120.f));
+		}
+		// The spikes ring the brow (the pose settles after the first frames, so they follow the head bone).
+		const float S = MenuSet::StatueScale;
+		for (int32 i = 0; i < CrownSpikes.Num(); ++i)
+		{
+			const float Angle = UE_TWO_PI * i / CrownSpikes.Num();
+			const FVector Out(FMath::Cos(Angle), FMath::Sin(Angle), 0.f);
+			const float Tall = CrownSpikes[i]->GetComponentScale().Z * 100.f; // cone is 100 units tall
+			const FQuat Lean = FQuat(FVector::CrossProduct(FVector::UpVector, Out).GetSafeNormal(), FMath::DegreesToRadians(14.f));
+			CrownSpikes[i]->SetWorldLocationAndRotation(At + Out * 10.5f * S + Lean.RotateVector(FVector(0.f, 0.f, 0.5f * Tall)) - FVector(0.f, 0.f, 8.f * S), Lean);
+		}
+		if (CrownMaterial)
+		{
+			CrownMaterial->SetScalarParameterValue(TEXT("Glow"), (5.f + 9.f * Pulse * Pulse) * Flicker);
+		}
+	}
+
+	// Lightning now and then: a double flash over the colosseum, its thunder a moment later.
+	if (Lightning)
+	{
+		if (Time >= NextFlash)
+		{
+			FlashTime = Time;
+			NextFlash = Time + FMath::FRandRange(8.f, 16.f);
+			ThunderAt = Time + FMath::FRandRange(0.5f, 1.4f);
+			Lightning->SetWorldRotation(FRotator(-FMath::FRandRange(35.f, 60.f), FMath::FRandRange(120.f, 220.f), 0.f));
+		}
+		const float T = Time - FlashTime;
+		float Flash = 0.f;
+		if (T >= 0.f && T < 0.6f)
+		{
+			Flash = FMath::Max(FMath::Exp(-T * 30.f), 0.7f * FMath::Exp(-FMath::Max(T - 0.18f, 0.f) * 18.f) * (T > 0.18f ? 1.f : 0.f));
+		}
+		Lightning->SetIntensity(18.f * Flash);
+		if (ThunderAt > 0.f && Time >= ThunderAt)
+		{
+			ThunderAt = -1.f;
+			if (!bLeaving)
+			{
+				GameAudio::Play2D(this, TEXT("Thunder"), 0.55f, FMath::FRandRange(0.8f, 1.05f));
+			}
+		}
 	}
 }
 
@@ -184,14 +268,15 @@ void AMainMenuGameMode::BuildScene()
 		Component->RegisterComponent();
 		return Component;
 	};
+	auto Mesh = [](const TCHAR* Folder, const TCHAR* Name) { return MenuSet::Load<UStaticMesh>(*FString::Printf(TEXT("%s%s.%s"), Folder, Name, Name)); };
 
-	// Sand underfoot, as far as the fog lets you see.
+	// The arena's sand, out under the walls.
 	UStaticMesh* Cylinder = MenuSet::Load<UStaticMesh>(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 	UMaterialInterface* Dunes = MenuSet::Load<UMaterialInterface>(TEXT("/Game/ThirdPerson/Colosseum/M_Dunes.M_Dunes"));
 	if (Cylinder && Dunes)
 	{
 		UMaterialInstanceDynamic* Sand = UMaterialInstanceDynamic::Create(Dunes, Set);
-		Sand->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.55f, 0.47f, 0.38f));
+		Sand->SetVectorParameterValue(TEXT("Tint"), FLinearColor(0.5f, 0.42f, 0.34f));
 		for (const TCHAR* Map : { TEXT("D"), TEXT("N"), TEXT("R") })
 		{
 			if (UTexture* Texture = MenuSet::Load<UTexture>(*FString::Printf(TEXT("/Game/Environment/Textures/T_DesertSand_%s.T_DesertSand_%s"), Map, Map)))
@@ -200,41 +285,38 @@ void AMainMenuGameMode::BuildScene()
 			}
 		}
 		const FBox Box = Cylinder->GetBoundingBox();
-		AddMesh(Cylinder, FTransform(FRotator::ZeroRotator, FVector(0.f, 0.f, -100.f), FVector(30000.f / Box.GetSize().X, 30000.f / Box.GetSize().Y, 200.f / Box.GetSize().Z)), Sand);
+		AddMesh(Cylinder, FTransform(FRotator::ZeroRotator, FVector(0.f, 0.f, -100.f), FVector(16000.f / Box.GetSize().X, 16000.f / Box.GetSize().Y, 200.f / Box.GetSize().Z)), Sand);
 	}
 
-	// Ruins: an arcade and a triumphal arch far back in the fog, columns standing, fallen and broken.
-	const TCHAR* World_ = TEXT("/Game/ThirdPerson/Colosseum/World/");
+	// The colosseum around it all, the arena's own mesh at the arena's size.
+	if (UStaticMesh* Colosseum = MenuSet::Load<UStaticMesh>(TEXT("/Game/ThirdPerson/colosseum.colosseum")))
+	{
+		const FBox Box = Colosseum->GetBoundingBox();
+		const FVector S = MenuSet::ColosseumScale;
+		AddMesh(Colosseum, FTransform(FRotator::ZeroRotator, FVector(-Box.GetCenter().X * S.X, -Box.GetCenter().Y * S.Y, -Box.Min.Z * S.Z - 30.f), S));
+	}
+
+	// Toppled columns and broken drums lying in the sand, as the story has them round the colosseum.
 	const TCHAR* Meshes = TEXT("/Game/ThirdPerson/Colosseum/Meshes/");
-	auto Mesh = [](const TCHAR* Folder, const TCHAR* Name) { return MenuSet::Load<UStaticMesh>(*FString::Printf(TEXT("%s%s.%s"), Folder, Name, Name)); };
-	AddMesh(Mesh(World_, TEXT("SM_ArcadeRuin")), FTransform(FRotator(0.f, 25.f, 0.f), FVector(3600.f, -2600.f, -20.f)));
-	AddMesh(Mesh(World_, TEXT("SM_TriumphalArch")), FTransform(FRotator(0.f, -100.f, 0.f), FVector(6200.f, 1900.f, -30.f)));
-	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn")), FTransform(FRotator::ZeroRotator, FVector(950.f, -950.f, 0.f), FVector(1.3f)));
-	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn")), FTransform(FRotator::ZeroRotator, FVector(1700.f, 1050.f, 0.f), FVector(1.3f)));
-	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn_BrokenA")), FTransform(FRotator(0.f, 40.f, 0.f), FVector(650.f, 700.f, 0.f), FVector(1.2f)));
-	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn_BrokenB")), FTransform(FRotator(0.f, 10.f, 0.f), FVector(380.f, -1050.f, 0.f), FVector(1.2f)));
-	// Fallen pieces lying on their sides (pitch -90 lays a column along its yaw), resting on the sand.
+	const TCHAR* WorldSet = TEXT("/Game/ThirdPerson/Colosseum/World/");
+	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn")), FTransform(FRotator::ZeroRotator, FVector(-1300.f, -1700.f, 0.f), FVector(1.4f)));
+	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn_BrokenA")), FTransform(FRotator(0.f, 40.f, 0.f), FVector(900.f, 1500.f, 0.f), FVector(1.3f)));
+	AddMesh(Mesh(Meshes, TEXT("SM_RomanColumn_BrokenB")), FTransform(FRotator(0.f, 10.f, 0.f), FVector(-2100.f, -900.f, 0.f), FVector(1.2f)));
 	struct FFallen { const TCHAR* Name; FVector At; float Yaw; float Scale; };
 	const FFallen Fallen[] = {
-		{ TEXT("SM_RomanColumn"), FVector(2600.f, -1500.f, 0.f), 70.f, 1.25f },
-		{ TEXT("SM_RomanColumn_BrokenA"), FVector(2100.f, -700.f, 0.f), -35.f, 1.2f },
-		{ TEXT("SM_RomanColumn_BrokenB"), FVector(1000.f, -900.f, 0.f), 30.f, 1.1f },
-		{ TEXT("SM_RomanColumn_BrokenB"), FVector(2300.f, 900.f, 0.f), 100.f, 1.f },
-		{ TEXT("SM_RomanColumn_BrokenA"), FVector(1900.f, 1500.f, 0.f), -70.f, 1.1f } };
+		{ TEXT("SM_RomanColumn"), FVector(-1500.f, -1200.f, 0.f), 70.f, 1.3f },
+		{ TEXT("SM_RomanColumn_BrokenA"), FVector(1300.f, -1300.f, 0.f), -35.f, 1.2f },
+		{ TEXT("SM_RomanColumn_BrokenB"), FVector(-900.f, 1400.f, 0.f), 30.f, 1.1f },
+		{ TEXT("SM_RomanColumn"), FVector(1600.f, 900.f, 0.f), 100.f, 1.2f } };
 	for (const FFallen& Piece : Fallen)
 	{
 		AddMesh(Mesh(Meshes, Piece.Name), FTransform(FRotator(-90.f, Piece.Yaw, 0.f), Piece.At + FVector(0.f, 0.f, 52.f * Piece.Scale), FVector(Piece.Scale)));
 	}
+	AddMesh(Mesh(WorldSet, TEXT("SM_RomanBlock_B")), FTransform(FRotator(8.f, 25.f, 4.f), FVector(-1700.f, -500.f, -10.f), FVector(2.2f, 1.6f, 1.2f)));
+	AddMesh(Mesh(WorldSet, TEXT("SM_RomanBlock_C")), FTransform(FRotator(-6.f, -40.f, 3.f), FVector(1100.f, 1900.f, -10.f), FVector(2.f, 1.5f, 1.3f)));
 
+	// Sparse dry grass and stones in the sand.
 	FRandomStream Random(1977);
-	auto Clear = [](const FVector& P)
-	{
-		// Keep the space around Elvis, the fires and the camera's view of them open.
-		return FVector::Dist2D(P, MenuSet::ElvisAt) > 260.f && FVector::Dist2D(P, MenuSet::BrazierLeft) > 200.f
-			&& FVector::Dist2D(P, MenuSet::BrazierRight) > 200.f && FVector::Dist2D(P, MenuSet::Bonfire) > 260.f && P.X > -200.f;
-	};
-
-	// Ground cover and a few palms standing dark against the fog (the Rome assets).
 	TMap<UStaticMesh*, UInstancedStaticMeshComponent*> Instancers;
 	auto Instance = [&](UStaticMesh* InstanceMesh, const FTransform& Transform)
 	{
@@ -253,46 +335,39 @@ void AMainMenuGameMode::BuildScene()
 		}
 		Instancer->AddInstance(Transform, true);
 	};
+	auto Clear = [](const FVector& P)
+	{
+		// Keep the plinth, the braziers and the space between Elvis and the statue open.
+		return FVector::Dist2D(P, MenuSet::StatueAt) > 800.f && FVector::Dist2D(P, MenuSet::ElvisAt) > 250.f
+			&& FMath::Abs(P.Y - 0.5f * (MenuSet::ElvisAt.Y + MenuSet::StatueAt.Y)) > 300.f;
+	};
 	const TCHAR* Ground = TEXT("/Game/Rome/Ground/");
-	UStaticMesh* Grass[3] = { Mesh(Ground, TEXT("SM_Esparto_01")), Mesh(Ground, TEXT("SM_Esparto_02")), Mesh(Ground, TEXT("SM_Esparto_03")) };
-	UStaticMesh* Shrubs[3] = { Mesh(Ground, TEXT("SM_DeadShrub_01")), Mesh(Ground, TEXT("SM_DeadShrub_02")), Mesh(Ground, TEXT("SM_DesertShrub_01")) };
+	UStaticMesh* Grass[3] = { Mesh(Ground, TEXT("SM_Esparto_01")), Mesh(Ground, TEXT("SM_Esparto_02")), Mesh(Ground, TEXT("SM_DeadShrub_01")) };
 	UStaticMesh* Pebbles[3] = { Mesh(Ground, TEXT("SM_Pebbles_01")), Mesh(Ground, TEXT("SM_Pebbles_02")), Mesh(Ground, TEXT("SM_Pebbles_03")) };
 	auto Upright = [&](const FVector& P, float Scale) { return FTransform(FRotator(Random.FRandRange(-4.f, 4.f), Random.FRandRange(0.f, 360.f), 0.f), P, FVector(Scale)); };
-	for (int32 i = 0; i < 160; ++i)
+	for (int32 i = 0; i < 90; ++i)
 	{
-		const FVector P(Random.FRandRange(-500.f, 3500.f), Random.FRandRange(-2600.f, 2600.f), -3.f);
+		const FVector P(Random.FRandRange(-2600.f, 2600.f), Random.FRandRange(-2200.f, 2200.f), -3.f);
 		if (Clear(P))
 		{
-			Instance(Grass[Random.RandRange(0, 2)], Upright(P, Random.FRandRange(0.5f, 1.1f)));
+			Instance(Grass[Random.RandRange(0, 2)], Upright(P, Random.FRandRange(0.5f, 1.f)));
 		}
 	}
-	for (int32 i = 0; i < 24; ++i)
+	for (int32 i = 0; i < 140; ++i)
 	{
-		const FVector P(Random.FRandRange(0.f, 3500.f), Random.FRandRange(-2600.f, 2600.f), -4.f);
-		if (Clear(P))
-		{
-			Instance(Shrubs[Random.RandRange(0, 2)], Upright(P, Random.FRandRange(0.9f, 1.6f)));
-		}
-	}
-	for (int32 i = 0; i < 120; ++i)
-	{
-		const FVector P(Random.FRandRange(-600.f, 3000.f), Random.FRandRange(-2400.f, 2400.f), -2.f);
+		const FVector P(Random.FRandRange(-2600.f, 2600.f), Random.FRandRange(-2200.f, 2200.f), -2.f);
 		if (FVector::Dist2D(P, MenuSet::ElvisAt) > 120.f)
 		{
 			Instance(Pebbles[Random.RandRange(0, 2)], Upright(P, Random.FRandRange(0.7f, 1.4f)));
 		}
 	}
-	const TCHAR* Trees = TEXT("/Game/Rome/Trees/");
-	Instance(Mesh(Trees, TEXT("SM_DatePalm_03")), FTransform(FRotator(0.f, 30.f, 0.f), FVector(4300.f, -900.f, -60.f), FVector(1.2f)));
-	Instance(Mesh(Trees, TEXT("SM_DatePalm_02")), FTransform(FRotator(0.f, 200.f, 0.f), FVector(5000.f, 700.f, -60.f), FVector(1.3f)));
-	Instance(Mesh(Trees, TEXT("SM_DatePalm_01")), FTransform(FRotator(0.f, 120.f, 0.f), FVector(3100.f, 2700.f, -60.f), FVector(1.1f)));
 
-	// Fire: two braziers framing Elvis and a bonfire behind him that backlights him, all real flames.
-	SpawnBrazier(MenuSet::BrazierLeft);
-	SpawnBrazier(MenuSet::BrazierRight);
-	SpawnBonfire(MenuSet::Bonfire);
-
-	SpawnStatue(MenuSet::StatueAt, 195.f, 4.5f);
+	// The possessed god in bronze, braziers burning round his plinth.
+	SpawnStatue(MenuSet::StatueAt, 180.f, MenuSet::StatueScale);
+	for (const FVector& At : MenuSet::Braziers)
+	{
+		SpawnBrazier(At);
+	}
 	auto Fill = [&](const FVector& At, float Candelas, float Radius, const FLinearColor& Color)
 	{
 		UPointLightComponent* Light = NewObject<UPointLightComponent>(Set);
@@ -304,61 +379,130 @@ void AMainMenuGameMode::BuildScene()
 		Light->SetLightColor(Color);
 		Light->SetVolumetricScatteringIntensity(0.3f);
 		Light->RegisterComponent();
+		return Light;
 	};
-	Fill(FVector(-420.f, -480.f, 160.f), 45.f, 1400.f, FLinearColor(1.f, 0.5f, 0.2f));   // a fire off-screen, lighting Elvis's front
-	Fill(MenuSet::StatueAt + FVector(-450.f, -80.f, 120.f), 200.f, 2400.f, FLinearColor(1.f, 0.45f, 0.18f)); // firelight up the statue
-	SpawnElvis(MenuSet::ElvisAt, 165.f);
+	Fill(MenuSet::StatueAt + FVector(-700.f, -150.f, 250.f), 160.f, 2200.f, FLinearColor(1.f, 0.45f, 0.18f)); // firelight up the bronze
+	Fill(MenuSet::ElvisAt + FVector(-250.f, -300.f, 220.f), 60.f, 900.f, FLinearColor(1.f, 0.5f, 0.25f));   // firelight on Elvis's back and cape
+	CrownLight = Fill(CrownLocation(), 300.f, 1100.f, MenuSet::BloodRed);
+	// The crown itself: a ring of glowing red spikes round the statue's brow, the one thing in the bronze that is alive.
+	UStaticMesh* Cone = MenuSet::Load<UStaticMesh>(TEXT("/Engine/BasicShapes/Cone.Cone"));
+	UMaterialInterface* ShapeMat = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"));
+	if (Cone && ShapeMat && Statue)
+	{
+		UMaterialInstanceDynamic* Ember = UMaterialInstanceDynamic::Create(ShapeMat, Set);
+		Ember->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.18f, 0.04f));
+		Ember->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		Ember->SetScalarParameterValue(TEXT("Roughness"), 0.6f);
+		Ember->SetScalarParameterValue(TEXT("Glow"), 9.f);
+		CrownMaterial = Ember;
+		const FVector Size = Cone->GetBoundingBox().GetSize();
+		const float S = MenuSet::StatueScale;
+		for (int32 i = 0; i < 9; ++i)
+		{
+			const float Angle = UE_TWO_PI * i / 9.f;
+			const float Tall = (i % 2 == 0 ? 15.f : 9.f) * S;
+			UStaticMeshComponent* Spike = NewObject<UStaticMeshComponent>(Set);
+			Spike->SetStaticMesh(Cone);
+			Spike->SetMaterial(0, Ember);
+			Spike->SetCastShadow(false);
+			Spike->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Spike->SetupAttachment(Set->GetRootComponent());
+			Spike->SetWorldScale3D(FVector(3.2f * S, 3.2f * S, Tall) / Size); // placed round the head each tick (UpdateStorm)
+			Spike->RegisterComponent();
+			CrownSpikes.Add(Spike);
+		}
+	}
+	CrownLight->SetVolumetricScatteringIntensity(2.f);
+	SpawnElvis(MenuSet::ElvisAt, FMath::RadiansToDegrees(FMath::Atan2(MenuSet::StatueAt.Y - MenuSet::ElvisAt.Y, MenuSet::StatueAt.X - MenuSet::ElvisAt.X)));
 
-	// Embers hanging in the air.
-	if (ADriftParticles* Embers = World->SpawnActorDeferred<ADriftParticles>(ADriftParticles::StaticClass(), FTransform(FVector(900.f, 0.f, 400.f))))
+	// The blood sun, low over the far wall.
+	UStaticMesh* Sphere = MenuSet::Load<UStaticMesh>(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	UMaterialInterface* Shape = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"));
+	if (Sphere && Shape)
+	{
+		UMaterialInstanceDynamic* Glow = UMaterialInstanceDynamic::Create(Shape, Set);
+		Glow->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.08f, 0.03f));
+		Glow->SetScalarParameterValue(TEXT("Metallic"), 0.f);
+		Glow->SetScalarParameterValue(TEXT("Roughness"), 1.f);
+		Glow->SetScalarParameterValue(TEXT("Glow"), 2.2f);
+		if (UStaticMeshComponent* Sun = AddMesh(Sphere, FTransform(FRotator::ZeroRotator, MenuSet::SunAt(), FVector(520.f / Sphere->GetBoundingBox().GetSize().X)), Glow))
+		{
+			Sun->SetCastShadow(false);
+			Sun->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+	}
+
+	// The sun's red light from behind the statue, rimming him and Elvis; and the lightning, dark until it strikes.
+	const FRotator FromSun = (MenuSet::StatueAt - MenuSet::SunAt()).Rotation();
+	if (ADirectionalLight* SunLight = World->SpawnActor<ADirectionalLight>(FVector::ZeroVector, FromSun, SpawnParams))
+	{
+		UDirectionalLightComponent* Light = Cast<UDirectionalLightComponent>(SunLight->GetLightComponent());
+		Light->SetMobility(EComponentMobility::Movable);
+		Light->SetIntensity(5.f);
+		Light->SetLightColor(FLinearColor(1.f, 0.22f, 0.1f));
+		Light->SetVolumetricScatteringIntensity(1.2f);
+		Light->ForwardShadingPriority = 1; // the main light for fog and translucency, not the lightning
+	}
+	if (ADirectionalLight* Bolt = World->SpawnActor<ADirectionalLight>(FVector::ZeroVector, FRotator(-50.f, 160.f, 0.f), SpawnParams))
+	{
+		Lightning = Cast<UDirectionalLightComponent>(Bolt->GetLightComponent());
+		Lightning->SetMobility(EComponentMobility::Movable);
+		Lightning->SetIntensity(0.f);
+		Lightning->SetLightColor(FLinearColor(0.75f, 0.72f, 1.f));
+		Lightning->SetCastShadows(false);
+	}
+
+	// Blood rain, and embers rising off the crown.
+	if (ADriftParticles* Rain = World->SpawnActorDeferred<ADriftParticles>(ADriftParticles::StaticClass(), FTransform::Identity))
+	{
+		Rain->bFollowCamera = true;
+		Rain->Count = 3500;
+		Rain->Area = FVector(4000.f, 4000.f, 2200.f);
+		Rain->Velocity = FVector(180.f, 120.f, -2100.f);
+		UGameplayStatics::FinishSpawningActor(Rain, FTransform::Identity);
+	}
+	if (ADriftParticles* Embers = World->SpawnActorDeferred<ADriftParticles>(ADriftParticles::StaticClass(), FTransform(CrownLocation())))
 	{
 		Embers->bFollowCamera = false;
-		Embers->Count = 700;
-		Embers->Area = FVector(3000.f, 3600.f, 1000.f);
-		Embers->Velocity = FVector(35.f, 20.f, 75.f);
-		Embers->Turbulence = 70.f;
-		Embers->ParticleSize = FVector(1.6f, 1.6f, 5.f);
-		Embers->Color = FLinearColor(1.f, 0.32f, 0.06f);
-		Embers->Glow = 8.f;
-		UGameplayStatics::FinishSpawningActor(Embers, FTransform(FVector(900.f, 0.f, 400.f)));
+		Embers->Count = 55;
+		Embers->Area = FVector(160.f, 160.f, 260.f);
+		Embers->Velocity = FVector(10.f, 20.f, 55.f);
+		Embers->Turbulence = 45.f;
+		Embers->ParticleSize = FVector(1.4f, 1.4f, 4.f);
+		Embers->Color = FLinearColor(1.f, 0.28f, 0.05f);
+		Embers->Glow = 12.f;
+		UGameplayStatics::FinishSpawningActor(Embers, FTransform(CrownLocation()));
+		CrownEmbers = Embers;
 	}
 
-	// Night: a cold moon behind the scene rimming everything, thick fog the fires glow through.
-	if (ADirectionalLight* Moon = World->SpawnActor<ADirectionalLight>(FVector::ZeroVector, FRotator(-22.f, 165.f, 0.f), SpawnParams))
-	{
-		UDirectionalLightComponent* Light = Cast<UDirectionalLightComponent>(Moon->GetLightComponent());
-		Moon->GetLightComponent()->SetMobility(EComponentMobility::Movable);
-		Light->SetIntensity(4.f);
-		Light->SetLightColor(FLinearColor(0.55f, 0.65f, 1.f));
-		Light->SetVolumetricScatteringIntensity(1.5f);
-	}
+	// The storm's haze, lit red, thin enough to see the far wall and the sun through.
 	if (AExponentialHeightFog* FogActor = World->SpawnActor<AExponentialHeightFog>(FVector(0.f, 0.f, -50.f), FRotator::ZeroRotator, SpawnParams))
 	{
 		UExponentialHeightFogComponent* Fog = FogActor->GetComponent();
-		Fog->SetFogDensity(0.02f);
-		Fog->SetFogHeightFalloff(0.35f);
-		Fog->SetFogInscatteringColor(FLinearColor(0.012f, 0.014f, 0.02f));
-		Fog->SetStartDistance(200.f);
+		Fog->SetFogDensity(0.012f);
+		Fog->SetFogHeightFalloff(0.25f);
+		Fog->SetFogInscatteringColor(FLinearColor(0.035f, 0.008f, 0.006f));
+		Fog->SetStartDistance(400.f);
 		Fog->SetVolumetricFog(true);
-		Fog->SetVolumetricFogScatteringDistribution(0.6f);
-		Fog->SetVolumetricFogExtinctionScale(1.2f);
-		Fog->SetVolumetricFogDistance(7000.f);
+		Fog->SetVolumetricFogScatteringDistribution(0.7f);
+		Fog->SetVolumetricFogExtinctionScale(0.8f);
+		Fog->SetVolumetricFogDistance(9000.f);
 	}
 	if (APostProcessVolume* Grade = World->SpawnActor<APostProcessVolume>(FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams))
 	{
 		Grade->bUnbound = true;
 		FPostProcessSettings& Settings = Grade->Settings;
 		Settings.bOverride_BloomIntensity = true;
-		Settings.BloomIntensity = 1.2f;
+		Settings.BloomIntensity = 1.4f;
 		Settings.bOverride_VignetteIntensity = true;
-		Settings.VignetteIntensity = 0.8f;
+		Settings.VignetteIntensity = 0.85f;
 		Settings.bOverride_FilmGrainIntensity = true;
 		Settings.FilmGrainIntensity = 0.25f;
 		Settings.bOverride_ColorSaturation = true;
-		Settings.ColorSaturation = FVector4(0.85f, 0.85f, 0.85f, 1.f);
+		Settings.ColorSaturation = FVector4(0.9f, 0.9f, 0.9f, 1.f);
 		Settings.bOverride_ColorContrast = true;
 		Settings.ColorContrast = FVector4(1.15f, 1.15f, 1.15f, 1.f);
-		// Fixed exposure (EV100) for a firelit night, so the fires don't pump the brightness around.
+		// Fixed exposure (EV100) for a firelit night, so the flashes and fires don't pump the brightness around.
 		Settings.bOverride_AutoExposureMinBrightness = true;
 		Settings.AutoExposureMinBrightness = 2.6f;
 		Settings.bOverride_AutoExposureMaxBrightness = true;
@@ -372,7 +516,7 @@ void AMainMenuGameMode::BuildScene()
 	Camera = World->SpawnActor<ACameraActor>(CameraBase, (CameraLookAt - CameraBase).Rotation(), SpawnParams);
 	if (Camera)
 	{
-		Camera->GetCameraComponent()->SetFieldOfView(40.f);
+		Camera->GetCameraComponent()->SetFieldOfView(45.f);
 		Camera->GetCameraComponent()->SetConstraintAspectRatio(false);
 	}
 }
@@ -398,18 +542,18 @@ void AMainMenuGameMode::SpawnElvis(const FVector& Location, float Yaw)
 
 void AMainMenuGameMode::SpawnStatue(const FVector& Location, float Yaw, float Scale)
 {
-	// Vulcan as the bronze statue he starts the fight as, huge, half lost in the fog.
-	USkeletalMesh* Otter = MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
+	// Vulcan as the bronze statue he is bound in, huge on his plinth, the crown still on his head.
+	USkeletalMesh* God = MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
 	UAnimSequence* Pose = MenuSet::Load<UAnimSequence>(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Statue.A_VulcanGod_Statue"));
 	UMaterialInterface* Skin = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/God/MI_VulcanGod.MI_VulcanGod"));
-	if (!Otter || !Set)
+	if (!God || !Set)
 	{
 		return;
 	}
-	USkeletalMeshComponent* Statue = NewObject<USkeletalMeshComponent>(Set);
-	Statue->SetSkeletalMesh(Otter);
+	Statue = NewObject<USkeletalMeshComponent>(Set);
+	Statue->SetSkeletalMesh(God);
 	Statue->SetupAttachment(Set->GetRootComponent());
-	// The mesh faces +Y; turn it so the statue faces down -X toward the camera (Yaw ~180).
+	// The mesh faces +Y; turn it so the statue faces down -X toward the camera (Yaw 180).
 	Statue->SetWorldTransform(FTransform(FRotator(0.f, Yaw - 90.f, 0.f), Location, FVector(Scale)));
 	Statue->RegisterComponent();
 	if (Pose)
@@ -425,74 +569,20 @@ void AMainMenuGameMode::SpawnStatue(const FVector& Location, float Yaw, float Sc
 			Statue->SetMaterial(i, Bronze);
 		}
 	}
-	// A plinth for him to stand on.
+	// A two-step plinth for him to stand on.
 	if (UStaticMesh* Block = MenuSet::Load<UStaticMesh>(TEXT("/Game/ThirdPerson/Colosseum/World/SM_RomanBlock_A.SM_RomanBlock_A")))
 	{
-		UStaticMeshComponent* Plinth = NewObject<UStaticMeshComponent>(Set);
-		Plinth->SetStaticMesh(Block);
-		Plinth->SetupAttachment(Set->GetRootComponent());
-		Plinth->SetWorldTransform(FTransform(FRotator(0.f, Yaw, 0.f), Location - FVector(0.f, 0.f, 20.f), FVector(7.f, 7.f, 0.6f)));
-		Plinth->RegisterComponent();
-		Statue->SetWorldLocation(Location + FVector(0.f, 0.f, 42.f));
-	}
-}
-
-void AMainMenuGameMode::SpawnBonfire(const FVector& Location)
-{
-	// Charred logs leaning together over glowing coals, in a ring of stones.
-	UStaticMesh* Cylinder = MenuSet::Load<UStaticMesh>(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-	UStaticMesh* Rock = MenuSet::Load<UStaticMesh>(TEXT("/Game/KiteDemo/Environments/Rocks/River_Rock_01/SM_River_Rock_01.SM_River_Rock_01"));
-	UMaterialInterface* Shape = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"));
-	if (!Cylinder || !Shape || !Set)
-	{
-		return;
-	}
-	UMaterialInstanceDynamic* Char = UMaterialInstanceDynamic::Create(Shape, Set);
-	Char->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.025f, 0.018f, 0.012f));
-	Char->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-	Char->SetScalarParameterValue(TEXT("Roughness"), 0.95f);
-	Char->SetScalarParameterValue(TEXT("Glow"), 0.f);
-	UMaterialInstanceDynamic* Coals = UMaterialInstanceDynamic::Create(Shape, Set);
-	Coals->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.28f, 0.04f));
-	Coals->SetScalarParameterValue(TEXT("Metallic"), 0.f);
-	Coals->SetScalarParameterValue(TEXT("Roughness"), 1.f);
-	Coals->SetScalarParameterValue(TEXT("Glow"), 4.f);
-
-	const FVector CylinderSize = Cylinder->GetBoundingBox().GetSize();
-	auto Add = [&](UStaticMesh* Mesh, const FTransform& Transform, UMaterialInterface* Material)
-	{
-		UStaticMeshComponent* Piece = NewObject<UStaticMeshComponent>(Set);
-		Piece->SetStaticMesh(Mesh);
-		Piece->SetupAttachment(Set->GetRootComponent());
-		Piece->SetWorldTransform(Transform);
-		if (Material)
+		for (int32 Step = 0; Step < 2; ++Step)
 		{
-			Piece->SetMaterial(0, Material);
+			UStaticMeshComponent* Plinth = NewObject<UStaticMeshComponent>(Set);
+			Plinth->SetStaticMesh(Block);
+			Plinth->SetupAttachment(Set->GetRootComponent());
+			const float Width = Step == 0 ? 9.f : 7.f;
+			Plinth->SetWorldTransform(FTransform(FRotator(0.f, Yaw, 0.f), Location + FVector(0.f, 0.f, Step == 0 ? -20.f : 15.f), FVector(Width, Width, 0.6f)));
+			Plinth->RegisterComponent();
 		}
-		Piece->SetCastShadow(Material != Coals);
-		Piece->RegisterComponent();
-	};
-	Add(Cylinder, FTransform(FRotator::ZeroRotator, Location + FVector(0.f, 0.f, 2.f), FVector(160.f, 160.f, 6.f) / CylinderSize), Coals);
-	FRandomStream Random(77);
-	for (int32 i = 0; i < 6; ++i)
-	{
-		// Each log leans in from the edge toward the middle, like a tent of sticks.
-		const float Angle = UE_TWO_PI * i / 6.f + Random.FRandRange(-0.2f, 0.2f);
-		const FVector Out(FMath::Cos(Angle), FMath::Sin(Angle), 0.f);
-		const FVector Axis = (-Out * 0.75f + FVector::UpVector * 0.66f).GetSafeNormal();
-		Add(Cylinder, FTransform(FRotationMatrix::MakeFromZ(Axis).Rotator(), Location + Out * 42.f + FVector(0.f, 0.f, 42.f),
-			FVector(20.f, 20.f, Random.FRandRange(140.f, 175.f)) / CylinderSize), Char);
+		Statue->SetWorldLocation(Location + FVector(0.f, 0.f, 38.f));
 	}
-	if (Rock)
-	{
-		for (int32 i = 0; i < 11; ++i)
-		{
-			const float Angle = UE_TWO_PI * i / 11.f + Random.FRandRange(-0.1f, 0.1f);
-			Add(Rock, FTransform(FRotator(Random.FRandRange(-15.f, 15.f), Random.FRandRange(0.f, 360.f), Random.FRandRange(-15.f, 15.f)),
-				Location + FVector(FMath::Cos(Angle) * 150.f, FMath::Sin(Angle) * 150.f, -6.f), FVector(Random.FRandRange(1.2f, 1.7f))), nullptr);
-		}
-	}
-	AFlameFX::Spawn(GetWorld(), Location, 330.f, 220.f);
 }
 
 void AMainMenuGameMode::SpawnBrazier(const FVector& Location)
@@ -586,10 +676,11 @@ void AMainMenuGameMode::StartNewGame()
 	bLeaving = true;
 	if (Music)
 	{
-		Music->FadeOut(1.4f, 0.f);
+		Music->FadeOut(9.f, 0.f);
 	}
+	// The prologue card over black, then the game.
 	TWeakObjectPtr<AMainMenuGameMode> WeakThis(this);
-	Menu->FadeOut(1.5f, [WeakThis]()
+	Menu->PlayPrologue([WeakThis]()
 	{
 		if (AMainMenuGameMode* Self = WeakThis.Get())
 		{
@@ -626,7 +717,6 @@ void AMainMenuGameMode::Quit()
 
 void AMainMenuGameMode::StartMenuShot()
 {
-	// Title, then the choices, two frames apart to check the flames move.
 	auto Shot = [](const TCHAR* Name)
 	{
 		FScreenshotRequest::RequestScreenshot(FPaths::ProjectSavedDir() / TEXT("SpearShots") / (FString(Name) + TEXT(".png")), true, false);
@@ -637,7 +727,7 @@ void AMainMenuGameMode::StartMenuShot()
 		FTimerHandle Handle;
 		Timers.SetTimer(Handle, FTimerDelegate::CreateWeakLambda(this, MoveTemp(Action)), Seconds, false);
 	};
-	After(3.8f, [this]()
+	After(4.2f, [this]()
 	{
 		// Where the set pieces land on screen (0..1), for framing.
 		APlayerController* Player = GetWorld()->GetFirstPlayerController();
@@ -649,8 +739,7 @@ void AMainMenuGameMode::StartMenuShot()
 		Player->GetViewportSize(Width, Height);
 		const TPair<const TCHAR*, FVector> Points[] = {
 			{ TEXT("ElvisFeet"), MenuSet::ElvisAt }, { TEXT("ElvisHead"), MenuSet::ElvisAt + FVector(0.f, 0.f, 185.f) },
-			{ TEXT("BrazierLeftFlame"), MenuSet::BrazierLeft + FVector(0.f, 0.f, 200.f) }, { TEXT("BrazierRightFlame"), MenuSet::BrazierRight + FVector(0.f, 0.f, 200.f) },
-			{ TEXT("BonfireTop"), MenuSet::Bonfire + FVector(0.f, 0.f, 300.f) }, { TEXT("StatueHead"), MenuSet::StatueAt + FVector(0.f, 0.f, 950.f) } };
+			{ TEXT("StatueFeet"), MenuSet::StatueAt }, { TEXT("Crown"), CrownLocation() }, { TEXT("Sun"), MenuSet::SunAt() } };
 		for (const TPair<const TCHAR*, FVector>& Point : Points)
 		{
 			FVector2D Screen;
@@ -658,17 +747,22 @@ void AMainMenuGameMode::StartMenuShot()
 			{
 				UE_LOG(LogTemp, Display, TEXT("MenuShot %s at %.2f %.2f"), Point.Key, Screen.X / Width, Screen.Y / Height);
 			}
+			else
+			{
+				UE_LOG(LogTemp, Display, TEXT("MenuShot %s off screen"), Point.Key);
+			}
 		}
 	});
-	// Record what the menu sounds like, to check the songs actually play.
-	After(0.5f, [this]() { UAudioMixerBlueprintLibrary::StartRecordingOutput(GetWorld(), 7.f); });
-	// Jump to the end of the first song, so the recording also catches the playlist moving on to the second.
-	After(1.f, [this]() { if (Music && Songs.Num() > 1) { Music->Play(FMath::Max(Songs[0]->GetDuration() - 3.f, 0.f)); } });
-	After(7.2f, [this]() { UAudioMixerBlueprintLibrary::StopRecordingOutput(GetWorld(), EAudioRecordingExportType::WavFile, TEXT("menu_audio"), FPaths::ProjectSavedDir() / TEXT("SpearShots")); });
-	After(4.f, [Shot]() { Shot(TEXT("menu_title")); });
-	After(5.f, [this]() { if (Menu) { Menu->OpenChoices(); } });
-	After(6.5f, [Shot]() { Shot(TEXT("menu_choices")); });
-	After(6.8f, [Shot]() { Shot(TEXT("menu_choices_b")); });
-	// Then press New Game, and let the arena's -EnvShot film it and quit: checks the hand-off to the game.
-	After(7.5f, [this]() { FCommandLine::Append(TEXT(" -EnvShot")); StartNewGame(); });
+	// A lightning strike on cue, so one frame catches it.
+	After(5.6f, [this]() { NextFlash = Time; });
+	After(4.4f, [Shot]() { Shot(TEXT("menu_title")); });
+	After(5.62f, [Shot]() { Shot(TEXT("menu_lightning")); });
+	After(6.f, [this]() { if (Menu) { Menu->OpenChoices(); } });
+	After(7.2f, [Shot]() { Shot(TEXT("menu_choices")); });
+	After(7.6f, [this]() { if (Menu) { Menu->OpenOptions(); } });
+	After(8.6f, [Shot]() { Shot(TEXT("menu_options")); });
+	After(9.f, [this]() { if (Menu) { Menu->CloseOptions(); } });
+	// Then New Game: the prologue card, and the game's -EnvShot films the hand-off and quits.
+	After(9.5f, [this]() { FCommandLine::Append(TEXT(" -EnvShot")); StartNewGame(); });
+	After(9.5f + 6.6f, [Shot]() { Shot(TEXT("menu_prologue")); });
 }
