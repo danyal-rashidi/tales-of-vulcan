@@ -28,6 +28,10 @@
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/Paths.h"
+#include "GroomAsset.h"
+#include "GroomComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "TimerManager.h"
@@ -198,37 +202,71 @@ AVulcanBoss::AVulcanBoss()
 	DeathAnimation = Death.Object;
 	GetMesh()->SetRelativeLocationAndRotation(FVector(0.f, 0.f, -90.f), FRotator(0.f, -90.f, 0.f));
 
-	// The rigged model (Content/Vulcan/God: the god-king, with the otter's moves retargeted onto him and the player's
-	// great-sword jump attack as his sword slam), run by UVulcanAnimInstance.
-	// Without it, the mannequin above wears the shape otter instead.
+	// The rigged model, run by UVulcanAnimInstance: Boss Vulcan (Content/BossVulcan: Human Vulcan's body in the boss armour,
+	// with the god-king's clips retargeted onto him) when it is there, else the god-king (Content/Vulcan/God: the otter's
+	// moves retargeted onto him and the player's great-sword jump attack as his sword slam).
+	// Without either, the mannequin above wears the shape otter instead.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BossModel(TEXT("/Game/BossVulcan/SK_BossVulcan_Body.SK_BossVulcan_Body"));
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> GodModel(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
-	if (GodModel.Succeeded())
+	bBossVulcanModel = BossModel.Succeeded();
+	if (bBossVulcanModel || GodModel.Succeeded())
 	{
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodRoar(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Roar.A_VulcanGod_Roar"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodDive(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Dive.A_VulcanGod_Dive"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodEmerge(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Emerge.A_VulcanGod_Emerge"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodHit(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_HitReact.A_VulcanGod_HitReact"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodDeath(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Death.A_VulcanGod_Death"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodSlam(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_JumpSlam.A_VulcanGod_JumpSlam"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodSpit(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Spit.A_VulcanGod_Spit"));
-		static ConstructorHelpers::FObjectFinder<UAnimSequenceBase> GodBreath(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Breath.A_VulcanGod_Breath"));
-		GetMesh()->SetSkeletalMeshAsset(GodModel.Object);
+		const FString Prefix = bBossVulcanModel ? TEXT("/Game/BossVulcan/Animations/A_BossVulcan_") : TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_");
+		auto Clip = [&Prefix](const TCHAR* Name) -> UAnimSequenceBase*
+		{
+			const FString Asset = FPaths::GetBaseFilename(Prefix + Name);
+			ConstructorHelpers::FObjectFinder<UAnimSequenceBase> Found(*(Prefix + Name + TEXT(".") + Asset));
+			return Found.Object;
+		};
+		GetMesh()->SetSkeletalMeshAsset(bBossVulcanModel ? BossModel.Object : GodModel.Object);
 		GetMesh()->SetAnimInstanceClass(UVulcanAnimInstance::StaticClass());
 		bUseOtterBody = false;
-		RoarAnimation = GodRoar.Object;
-		JumpAnimation = GodDive.Object;
-		LandAnimation = GodEmerge.Object;
-		HitReactAnimation = GodHit.Object;
-		DeathAnimation = GodDeath.Object;
-		SwordSlamAnimation = GodSlam.Object;
-		SpitAnimation = GodSpit.Object;
-		BreathAnimation = GodBreath.Object;
+		RoarAnimation = Clip(TEXT("Roar"));
+		JumpAnimation = Clip(TEXT("Dive"));
+		LandAnimation = Clip(TEXT("Emerge"));
+		HitReactAnimation = Clip(TEXT("HitReact"));
+		DeathAnimation = Clip(TEXT("Death"));
+		SwordSlamAnimation = Clip(TEXT("JumpSlam"));
+		SpitAnimation = Clip(TEXT("Spit"));
+		BreathAnimation = Clip(TEXT("Breath"));
 	}
 	else
 	{
 		// Squash the skeleton: shorter legs and torso give the otter chunky, chibi proportions.
 		GetMesh()->SetRelativeScale3D(FVector(0.9f, 0.9f, 0.7f));
 	}
+
+	// Boss Vulcan's armour, crown and greatsword follow the body's pose (SetLeaderPoseComponent at BeginPlay).
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BossArmour(TEXT("/Game/BossVulcan/SK_BossVulcan_Armour.SK_BossVulcan_Armour"));
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BossCrown(TEXT("/Game/BossVulcan/SK_BossVulcan_Crown.SK_BossVulcan_Crown"));
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BossSword(TEXT("/Game/BossVulcan/SK_BossVulcan_Sword.SK_BossVulcan_Sword"));
+	auto Follower = [this](const TCHAR* Name, USkeletalMesh* Asset)
+	{
+		USkeletalMeshComponent* Part = CreateDefaultSubobject<USkeletalMeshComponent>(Name);
+		Part->SetupAttachment(GetMesh());
+		Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Part->SetCanEverAffectNavigation(false);
+		Part->SetSkeletalMeshAsset(bBossVulcanModel ? Asset : nullptr);
+		return Part;
+	};
+	ArmourMesh = Follower(TEXT("BossArmour"), BossArmour.Object);
+	CrownMesh = Follower(TEXT("BossCrown"), BossCrown.Object);
+	GreatswordMesh = Follower(TEXT("BossGreatsword"), BossSword.Object);
+
+	// His strand hair (grooms in the body's rest-pose space; placed on their bones at BeginPlay).
+	static ConstructorHelpers::FObjectFinder<UGroomAsset> HairAsset(TEXT("/Game/BossVulcan/Hair/GR_BV_Hair_Head.GR_BV_Hair_Head"));
+	static ConstructorHelpers::FObjectFinder<UGroomAsset> BeardAsset(TEXT("/Game/BossVulcan/Hair/GR_BV_Hair_Jaw.GR_BV_Hair_Jaw"));
+	auto Groom = [this](const TCHAR* Name, FName Bone, UGroomAsset* Asset)
+	{
+		UGroomComponent* Part = CreateDefaultSubobject<UGroomComponent>(Name);
+		Part->SetupAttachment(GetMesh(), Bone);
+		Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Part->SetCanEverAffectNavigation(false);
+		Part->SetGroomAsset(bBossVulcanModel ? Asset : nullptr);
+		return Part;
+	};
+	HairGroom = Groom(TEXT("BossHair"), TEXT("head"), HairAsset.Object);
+	BeardGroom = Groom(TEXT("BossBeard"), TEXT("jaw"), BeardAsset.Object);
 
 	MouthPoint = CreateDefaultSubobject<USceneComponent>(TEXT("MouthPoint"));
 	MouthPoint->SetupAttachment(GetMesh(), TEXT("mouth"));
@@ -312,6 +350,50 @@ void AVulcanBoss::BeginPlay()
 	}
 	BuildMontagesFromAnimations();
 	GripSword();
+
+	if (bBossVulcanModel)
+	{
+		for (USkeletalMeshComponent* Part : { ArmourMesh.Get(), CrownMesh.Get(), GreatswordMesh.Get() })
+		{
+			if (Part)
+			{
+				Part->SetLeaderPoseComponent(GetMesh());
+			}
+		}
+		// Real size: the capsule is scaled up for the old boss; the body (and its followers) keep the model's 1.94 m.
+		GetMesh()->SetWorldScale3D(FVector(BossVulcanScale));
+
+		// The grooms were exported in the body's rest pose: undo their bone's rest transform so the strands sit where
+		// they were made, then ride the bone rigidly (as they are parented in Blender).
+		const FReferenceSkeleton& Ref = GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton();
+		auto RestPose = [&Ref](FName Bone)
+		{
+			FTransform Pose = FTransform::Identity;
+			for (int32 i = Ref.FindBoneIndex(Bone); i != INDEX_NONE; i = Ref.GetParentIndex(i))
+			{
+				Pose = Pose * Ref.GetRefBonePose()[i];
+			}
+			return Pose;
+		};
+		UMaterialInterface* HairMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/BossVulcan/Hair/M_BV_Hair.M_BV_Hair"), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		for (UGroomComponent* Hair : { HairGroom.Get(), BeardGroom.Get() })
+		{
+			if (Hair && Hair->GroomAsset)
+			{
+				Hair->SetRelativeTransform(RestPose(Hair->GetAttachSocketName()).Inverse());
+				for (int32 i = 0; HairMaterial && i < Hair->GetNumMaterials(); ++i)
+				{
+					Hair->SetMaterial(i, HairMaterial);
+				}
+			}
+		}
+		// His slam reaches less far than the old 2.45 m god-king's: at the hit his hand is 2.7 m out (was 3.6 m), and his
+		// blade meets the ground ~2.25 m out. Scale the slam's reach to match, so the fire lands where his sword does.
+		const float Reach = 0.74f * BossVulcanScale;
+		SwordSlamRange *= Reach;
+		SwordSlamImpactDistance *= Reach;
+		SwordSlamImpactRadius *= Reach;
+	}
 
 	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
 
@@ -921,20 +1003,27 @@ void AVulcanBoss::ApplyOtterLook()
 	}
 
 	// The rigged model turns to polished bronze while it is a statue (M_VulcanOtter's Statue parameter).
-	USkeletalMeshComponent* Body = GetMesh();
-	if (!bUseOtterBody && Body)
+	// Boss Vulcan's armour, crown, greatsword and hair turn to bronze with him.
+	if (!bUseOtterBody)
 	{
-		for (int32 i = 0; i < Body->GetNumMaterials(); ++i)
+		for (UMeshComponent* Body : TArray<UMeshComponent*>{ GetMesh(), ArmourMesh.Get(), CrownMesh.Get(), GreatswordMesh.Get(), HairGroom.Get(), BeardGroom.Get() })
 		{
-			UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(Body->GetMaterial(i));
-			if (!Material)
+			if (!Body || Body->GetNumMaterials() == 0)
 			{
-				Material = Body->CreateAndSetMaterialInstanceDynamic(i);
+				continue;
 			}
-			if (Material)
+			for (int32 i = 0; i < Body->GetNumMaterials(); ++i)
 			{
-				Material->SetScalarParameterValue(TEXT("Statue"), bStatue && !bStatueModel ? 1.f : 0.f);
-				Material->SetVectorParameterValue(TEXT("StatueColor"), BronzeColor);
+				UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(Body->GetMaterial(i));
+				if (!Material)
+				{
+					Material = Body->CreateAndSetMaterialInstanceDynamic(i);
+				}
+				if (Material)
+				{
+					Material->SetScalarParameterValue(TEXT("Statue"), bStatue && !bStatueModel ? 1.f : 0.f);
+					Material->SetVectorParameterValue(TEXT("StatueColor"), BronzeColor);
+				}
 			}
 		}
 	}
@@ -1699,7 +1788,8 @@ void AVulcanBoss::GripSword()
 	// in the palm, the blade out along the knuckles toward the thumb side, as a fist holds a sword.
 	USkeletalMeshComponent* Body = GetMesh();
 	const USkeletalMesh* Model = Body ? Body->GetSkeletalMeshAsset() : nullptr;
-	if (!Sword || !Sword->GetStaticMesh() || !Model || bUseOtterBody)
+	// Boss Vulcan carries his own greatsword (GreatswordMesh, skinned to hand_r).
+	if (!Sword || !Sword->GetStaticMesh() || !Model || bUseOtterBody || bBossVulcanModel)
 	{
 		if (Sword)
 		{

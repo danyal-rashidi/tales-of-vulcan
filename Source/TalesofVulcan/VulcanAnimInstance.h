@@ -89,6 +89,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category="Vulcan")
 	TObjectPtr<UAnimSequence> StatueAnimation;
 
+	/** Boss Vulcan's copies of idle, walk, run and statue (his own skeleton); used when the mesh is his. */
+	UPROPERTY(EditDefaultsOnly, Category="Vulcan")
+	TArray<TObjectPtr<UAnimSequence>> BossVulcanClips;
+
 protected:
 	virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
 	virtual void DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy) override;

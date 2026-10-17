@@ -33,6 +33,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "GroomAsset.h"
+#include "GroomComponent.h"
 #include "Misc/CommandLine.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
@@ -387,7 +389,7 @@ void AMainMenuGameMode::BuildScene()
 	// The crown itself: a ring of glowing red spikes round the statue's brow, the one thing in the bronze that is alive.
 	UStaticMesh* Cone = MenuSet::Load<UStaticMesh>(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	UMaterialInterface* ShapeMat = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/M_VulcanShape.M_VulcanShape"));
-	if (Cone && ShapeMat && Statue)
+	if (Cone && ShapeMat && Statue && !CrownMaterial) // Boss Vulcan wears his real crown (SpawnStatue)
 	{
 		UMaterialInstanceDynamic* Ember = UMaterialInstanceDynamic::Create(ShapeMat, Set);
 		Ember->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.18f, 0.04f));
@@ -543,9 +545,13 @@ void AMainMenuGameMode::SpawnElvis(const FVector& Location, float Yaw)
 void AMainMenuGameMode::SpawnStatue(const FVector& Location, float Yaw, float Scale)
 {
 	// Vulcan as the bronze statue he is bound in, huge on his plinth, the crown still on his head.
-	USkeletalMesh* God = MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
-	UAnimSequence* Pose = MenuSet::Load<UAnimSequence>(TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Statue.A_VulcanGod_Statue"));
-	UMaterialInterface* Skin = MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/God/MI_VulcanGod.MI_VulcanGod"));
+	// Boss Vulcan when he is there (his armour, sword and hair in bronze too; his real Ember Crown, not bronze, glowing),
+	// else the god-king.
+	USkeletalMesh* Boss = MenuSet::Load<USkeletalMesh>(TEXT("/Game/BossVulcan/SK_BossVulcan_Body.SK_BossVulcan_Body"));
+	USkeletalMesh* God = Boss ? Boss : MenuSet::Load<USkeletalMesh>(TEXT("/Game/Vulcan/God/SK_VulcanGod.SK_VulcanGod"));
+	UAnimSequence* Pose = MenuSet::Load<UAnimSequence>(Boss ? TEXT("/Game/BossVulcan/Animations/A_BossVulcan_Statue.A_BossVulcan_Statue")
+		: TEXT("/Game/Vulcan/God/Animations/A_VulcanGod_Statue.A_VulcanGod_Statue"));
+	UMaterialInterface* Skin = Boss ? nullptr : MenuSet::Load<UMaterialInterface>(TEXT("/Game/Vulcan/God/MI_VulcanGod.MI_VulcanGod"));
 	if (!God || !Set)
 	{
 		return;
@@ -554,11 +560,73 @@ void AMainMenuGameMode::SpawnStatue(const FVector& Location, float Yaw, float Sc
 	Statue->SetSkeletalMesh(God);
 	Statue->SetupAttachment(Set->GetRootComponent());
 	// The mesh faces +Y; turn it so the statue faces down -X toward the camera (Yaw 180).
-	Statue->SetWorldTransform(FTransform(FRotator(0.f, Yaw - 90.f, 0.f), Location, FVector(Scale)));
+	// Boss Vulcan is 1.94 m against the god-king's 1.53 m: scaled down to stand as tall in the frame.
+	Statue->SetWorldTransform(FTransform(FRotator(0.f, Yaw - 90.f, 0.f), Location, FVector(Boss ? Scale * 1.53f / 1.94f : Scale)));
 	Statue->RegisterComponent();
 	if (Pose)
 	{
 		Statue->PlayAnimation(Pose, true);
+	}
+	if (Boss)
+	{
+		auto Bronze = [this](UMeshComponent* Part, bool bStatue)
+		{
+			for (int32 i = 0; i < Part->GetNumMaterials(); ++i)
+			{
+				UMaterialInstanceDynamic* Material = Part->CreateAndSetMaterialInstanceDynamic(i);
+				if (Material)
+				{
+					Material->SetScalarParameterValue(TEXT("Statue"), bStatue ? 1.f : 0.f);
+					if (!bStatue)
+					{
+						CrownMaterial = Material; // pulsed by UpdateStorm
+					}
+				}
+			}
+		};
+		Bronze(Statue, true);
+		const TCHAR* Parts[] = { TEXT("Armour"), TEXT("Sword"), TEXT("Crown") };
+		for (const TCHAR* Name : Parts)
+		{
+			if (USkeletalMesh* Asset = MenuSet::Load<USkeletalMesh>(*FString::Printf(TEXT("/Game/BossVulcan/SK_BossVulcan_%s.SK_BossVulcan_%s"), Name, Name)))
+			{
+				USkeletalMeshComponent* Part = NewObject<USkeletalMeshComponent>(Set);
+				Part->SetSkeletalMesh(Asset);
+				Part->SetupAttachment(Statue);
+				Part->RegisterComponent();
+				Part->SetLeaderPoseComponent(Statue);
+				Bronze(Part, FCString::Strcmp(Name, TEXT("Crown")) != 0);
+			}
+		}
+		// His hair and beard: grooms in the body's rest-pose space, riding the head and jaw bones.
+		const FReferenceSkeleton& Ref = Boss->GetRefSkeleton();
+		auto RestPose = [&Ref](FName Bone)
+		{
+			FTransform Pose = FTransform::Identity;
+			for (int32 i = Ref.FindBoneIndex(Bone); i != INDEX_NONE; i = Ref.GetParentIndex(i))
+			{
+				Pose = Pose * Ref.GetRefBonePose()[i];
+			}
+			return Pose;
+		};
+		UMaterialInterface* HairMaterial = MenuSet::Load<UMaterialInterface>(TEXT("/Game/BossVulcan/Hair/M_BV_Hair.M_BV_Hair"));
+		const TPair<const TCHAR*, FName> Grooms[] = { { TEXT("Head"), TEXT("head") }, { TEXT("Jaw"), TEXT("jaw") } };
+		for (const TPair<const TCHAR*, FName>& G : Grooms)
+		{
+			if (UGroomAsset* Asset = MenuSet::Load<UGroomAsset>(*FString::Printf(TEXT("/Game/BossVulcan/Hair/GR_BV_Hair_%s.GR_BV_Hair_%s"), G.Key, G.Key)))
+			{
+				UGroomComponent* Hair = NewObject<UGroomComponent>(Set);
+				Hair->SetGroomAsset(Asset);
+				Hair->SetupAttachment(Statue, G.Value);
+				Hair->SetRelativeTransform(RestPose(G.Value).Inverse());
+				Hair->RegisterComponent();
+				for (int32 i = 0; HairMaterial && i < Hair->GetNumMaterials(); ++i)
+				{
+					Hair->SetMaterial(i, HairMaterial);
+				}
+				Bronze(Hair, true);
+			}
+		}
 	}
 	if (Skin)
 	{

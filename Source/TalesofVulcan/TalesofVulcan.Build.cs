@@ -14,6 +14,7 @@ public class TalesofVulcan : ModuleRules
 
 		PrivateDependencyModuleNames.Add("IKRig"); // ElvisAnimInstance retargets Quinn's pose onto Elvis
 		PrivateDependencyModuleNames.Add("AnimGraphRuntime"); // VulcanAnimInstance plays montages through a slot node
+		PrivateDependencyModuleNames.Add("HairStrandsCore"); // VulcanBoss: Boss Vulcan's hair and beard (Groom components)
 		PrivateDependencyModuleNames.Add("Landscape"); // RomeMapTools builds the Rome map's landscape (editor only)
 
 		// Uncomment if you are using Slate UI

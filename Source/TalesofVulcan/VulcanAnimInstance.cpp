@@ -4,6 +4,8 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimationPoseData.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 
 void FAnimNode_VulcanLocomotion::Weights(float& OutIdle, float& OutWalk, float& OutRun) const
 {
@@ -118,6 +120,12 @@ UVulcanAnimInstance::UVulcanAnimInstance()
 	WalkAnimation = Walk.Object;
 	RunAnimation = Run.Object;
 	StatueAnimation = Statue.Object;
+
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> BossIdle(TEXT("/Game/BossVulcan/Animations/A_BossVulcan_Idle.A_BossVulcan_Idle"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> BossWalk(TEXT("/Game/BossVulcan/Animations/A_BossVulcan_Walk.A_BossVulcan_Walk"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> BossRun(TEXT("/Game/BossVulcan/Animations/A_BossVulcan_Run.A_BossVulcan_Run"));
+	static ConstructorHelpers::FObjectFinder<UAnimSequence> BossStatue(TEXT("/Game/BossVulcan/Animations/A_BossVulcan_Statue.A_BossVulcan_Statue"));
+	BossVulcanClips = { BossIdle.Object, BossWalk.Object, BossRun.Object, BossStatue.Object };
 }
 
 FAnimInstanceProxy* UVulcanAnimInstance::CreateAnimInstanceProxy()
@@ -133,6 +141,16 @@ void UVulcanAnimInstance::DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy)
 void UVulcanAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
+	// Boss Vulcan has his own skeleton: switch to his copies of the clips when the mesh is his.
+	const USkeletalMeshComponent* Mesh = GetSkelMeshComponent();
+	const USkeletalMesh* Model = Mesh ? Mesh->GetSkeletalMeshAsset() : nullptr;
+	if (Model && BossVulcanClips.Num() == 4 && BossVulcanClips[0] && BossVulcanClips[0]->GetSkeleton() == Model->GetSkeleton())
+	{
+		IdleAnimation = BossVulcanClips[0];
+		WalkAnimation = BossVulcanClips[1];
+		RunAnimation = BossVulcanClips[2];
+		StatueAnimation = BossVulcanClips[3];
+	}
 	LocomotionNode.Idle = IdleAnimation;
 	LocomotionNode.Walk = WalkAnimation;
 	LocomotionNode.Run = RunAnimation;

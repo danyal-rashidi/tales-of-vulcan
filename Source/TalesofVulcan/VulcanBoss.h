@@ -10,6 +10,7 @@ class UHealthComponent;
 class UMaterialInstanceDynamic;
 class UPointLightComponent;
 class UStaticMeshComponent;
+class UGroomComponent;
 class AVulcanProjectile;
 
 UENUM(BlueprintType)
@@ -119,6 +120,31 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Sword")
 	float SwordScale = 1.15f;
+
+	/**
+	 * Boss Vulcan (/Game/BossVulcan): Human Vulcan's body in the boss armour. The armour, the Ember Crown and his greatsword
+	 * are skinned meshes on the body's skeleton that copy its pose, so each can be dropped or hidden on its own (the unmasking).
+	 */
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Boss Vulcan")
+	TObjectPtr<USkeletalMeshComponent> ArmourMesh;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Boss Vulcan")
+	TObjectPtr<USkeletalMeshComponent> CrownMesh;
+
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Boss Vulcan")
+	TObjectPtr<USkeletalMeshComponent> GreatswordMesh;
+
+	/** Strand hair: scalp, moustache and upper beard, brows and lashes, rigid on the head bone (as in Blender). */
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Boss Vulcan")
+	TObjectPtr<UGroomComponent> HairGroom;
+
+	/** The lower beard, rigid on the jaw bone. */
+	UPROPERTY(VisibleAnywhere, Category="Vulcan|Boss Vulcan")
+	TObjectPtr<UGroomComponent> BeardGroom;
+
+	/** His size in the world. 1 = the model's real 1.94 m (the capsule's boss scale is undone for the body). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Vulcan|Boss Vulcan")
+	float BossVulcanScale = 1.f;
 
 	/**
 	 * Once provoked (the statue awakens, the fight starts, or Vulcan gets hit) the original otter turns into the
@@ -665,6 +691,9 @@ private:
 
 	/** True once provoked (see bAwakenedForm). */
 	bool bAwakenedShown = false;
+
+	/** The Boss Vulcan model (body + armour + crown + greatsword) is in use instead of the old god-king. */
+	bool bBossVulcanModel = false;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UMaterialInstanceDynamic>> OtterMaterials;

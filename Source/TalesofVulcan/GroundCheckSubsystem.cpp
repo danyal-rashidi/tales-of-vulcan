@@ -1288,6 +1288,26 @@ void UGroundCheckSubsystem::StartOtterShot()
 		return;
 	}
 	Burst(TEXT("b_awaken"), 1.4f, 0.6f, 12);          // lightning, shaking, wake-up roar
+	// His face and hair from 1.4 m: front, three-quarter, side (between the wake-up and the first attack).
+	const float FaceYaws[3] = { 0.f, 35.f, 80.f };
+	for (int32 i = 0; i < 3; ++i)
+	{
+		const float FaceYaw = FaceYaws[i];
+		After(8.4f + i * 0.25f, [this, WeakBoss, FaceYaw, i]()
+		{
+			if (AVulcanBoss* B = WeakBoss.Get())
+			{
+				const FVector Head = B->GetMesh()->GetSocketLocation(TEXT("head")) + FVector(0.f, 0.f, 12.f);
+				ShootFrom(Head + B->GetActorForwardVector().RotateAngleAxis(FaceYaw, FVector::UpVector) * 140.f, Head);
+				// The camera's fill light is set for 5 m away; this close it would bleach him white.
+				if (UPointLightComponent* Fill = ShotCamera ? ShotCamera->FindComponentByClass<UPointLightComponent>() : nullptr)
+				{
+					Fill->SetIntensity(25.f);
+				}
+				Shot(FString::Printf(TEXT("otter_bb_face_%02d"), i));
+			}
+		});
+	}
 	After(9.2f, [Attack]() { Attack(EVulcanAttack::SwordSlam); });
 	Burst(TEXT("c_taillash"), 9.2f, 0.12f, 13);
 	After(11.6f, [Attack]() { Attack(EVulcanAttack::ObsidianSpit); });
